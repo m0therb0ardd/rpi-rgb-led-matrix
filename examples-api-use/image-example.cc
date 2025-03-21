@@ -148,9 +148,14 @@ int main(int argc, char *argv[]) {
     CopyImageToCanvas(images[0], matrix);
     while (!interrupt_received) sleep(1000);  // Until Ctrl-C is pressed
     break;
-  default:  // More than one image: this is an animation.
-    ShowAnimatedImage(images, matrix);
+  // default:  // More than one image: this is an animation.
+  //   ShowAnimatedImage(images, matrix);
+  //   break;
+  default:  // More than one image, but we only show the first frame
+    CopyImageToCanvas(images[0], matrix);
+    while (!interrupt_received) sleep(1000);  // Keep displaying the image
     break;
+
   }
 
   matrix->Clear();
