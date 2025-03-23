@@ -53,8 +53,6 @@ private:
  * class DemoRunner to generate new frames.
  */
 
-
-
 // Simple generator that pulses through RGB and White.
 class ColorPulseGenerator : public DemoRunner {
 public:
@@ -230,34 +228,6 @@ private:
     *new_y = x * sinf(angle) + y * cosf(angle);
   }
 };
-
-//new class catherine
-class PortalEffect : public DemoRunner {
-public:
-  PortalEffect(Canvas *m, int delay_ms = 50)
-    : DemoRunner(m), delay_ms_(delay_ms), t_(0) {
-    center_x_ = canvas()->width() / 2;
-    center_y_ = canvas()->height() / 2;
-  }
-
-  void Run() override {
-    while (!interrupt_received) {
-      canvas()->Clear();
-      int radius = (t_ % 20) + 1;
-      DrawCircle(canvas(), center_x_, center_y_, radius,
-                 Color((radius * 10) % 255, 100, 255 - (radius * 10) % 255));
-      t_++;
-      usleep(delay_ms_ * 1000);
-    }
-  }
-
-private:
-  int delay_ms_;
-  int t_;
-  int center_x_;
-  int center_y_;
-};
-
 
 class ImageScroller : public DemoRunner {
 public:
@@ -512,6 +482,43 @@ private:
   int** newValues_;
   int delay_ms_;
 };
+
+//new class catherine
+class PortalEffect : public DemoRunner {
+public:
+  PortalEffect(Canvas *m, int delay_ms = 50)
+    : DemoRunner(m), delay_ms_(delay_ms), t_(0) {
+    center_x_ = canvas()->width() / 2;
+    center_y_ = canvas()->height() / 2;
+  }
+
+  void Run() override {
+    while (!interrupt_received) {
+      canvas()->Clear();
+      int radius = (t_ % 20) + 1;
+      DrawCircle(canvas(), center_x_, center_y_, radius,
+                 Color((radius * 10) % 255, 100, 255 - (radius * 10) % 255));
+      t_++;
+      usleep(delay_ms_ * 1000);
+    }
+  }
+
+private:
+  void DrawCircle(Canvas *canvas, int cx, int cy, int r, const Color &color) {
+    for (float theta = 0; theta < 2 * M_PI; theta += 0.1) {
+      int x = cx + r * cos(theta);
+      int y = cy + r * sin(theta);
+      if (x >= 0 && x < canvas->width() && y >= 0 && y < canvas->height())
+        canvas->SetPixel(x, y, color.r, color.g, color.b);
+    }
+  }
+
+  int center_x_, center_y_;
+  int delay_ms_;
+  int t_;
+};
+
+
 
 
 // Conway's game of life
@@ -1079,9 +1086,7 @@ static int usage(const char *progname) {
           "\t8  - Langton's ant (-m <time-step-ms>)\n"
           "\t9  - Volume bars (-m <time-step-ms>)\n"
           "\t10 - Evolution of color (-m <time-step-ms>)\n"
-          "\t11 - Brightness pulse generator\n" 
-          "\t12 - Portal animation by Catherine\n");
-          
+          "\t11 - Brightness pulse generator\n");
   fprintf(stderr, "Example:\n\t%s -D 1 runtext.ppm\n"
           "Scrolls the runtext until Ctrl-C is pressed\n", progname);
   return 1;
@@ -1198,10 +1203,11 @@ int main(int argc, char *argv[]) {
   case 11:
     demo_runner = new BrightnessPulseGenerator(matrix);
     break;
-  
+
   case 12:
-    demo_runner = new PortalEffect(canvas);
+    demo_runner = new PortalEffect(canvas, scroll_ms);
     break;
+
   }
 
   if (demo_runner == NULL)
