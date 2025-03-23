@@ -214,9 +214,6 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  Color color(255, 255, 0);
-  Color bg_color(0, 0, 0);
-
   const char *bdf_font_file = "../fonts/6x10.bdf";
   rgb_matrix::Font font;
   if (!font.LoadFont(bdf_font_file)) {
@@ -232,8 +229,16 @@ int main(int argc, char *argv[]) {
   signal(SIGINT, InterruptHandler);
   printf("CTRL-C to exit.\n");
 
-  std::string message1 = "Hello from Panel 1";
-  std::string message2 = "Love from Panel 4";
+  std::string message1 = "i'm home";
+  std::string message2 = "am i dreaming";
+  std::string message3 = "are you there?";
+
+  //Adding colors
+  Color color1(50,50, 100); //
+  Color color2(80, 60, 120); //
+  Color color3(90, 90, 140); //
+  Color bg_color(0,0,0); //black background
+
   int letter_spacing = 0;
   float speed = 7.0f;
   int delay_speed_usec = 1000000 / speed / font.CharacterWidth('W');
@@ -248,18 +253,37 @@ int main(int argc, char *argv[]) {
     int x1 = x;
     int x2 = x + panel_width * 3;  // Start message 2 at panel 4
 
+    // Soft fading effect
+    int fade = abs((x / 5) % 510 - 255);  // smoothly oscillates from 0–255 and back
+
+    Color faded1(color1.r * fade / 255,
+                color1.g * fade / 255,
+                color1.b * fade / 255);
+
+    Color faded2(color2.r * ((fade + 85) % 255) / 255,
+                color2.g * ((fade + 85) % 255) / 255,
+                color2.b * ((fade + 85) % 255) / 255);
+
+    Color faded3(color3.r * ((fade + 170) % 255) / 255,
+                color3.g * ((fade + 170) % 255) / 255,
+                color3.b * ((fade + 170) % 255) / 255);
+
     int len1 = DrawText(offscreen_canvas, font,
-                        x1, y, color, nullptr,
-                        message1.c_str(), letter_spacing);
+                    x1, y, faded1, nullptr,
+                    message1.c_str(), letter_spacing);
 
     int len2 = DrawText(offscreen_canvas, font,
-                        x2, y + 12, color, nullptr,  // draw second line lower
+                        x2, y + 12, faded2, nullptr,
                         message2.c_str(), letter_spacing);
+
+    int len3 = DrawText(offscreen_canvas, font,
+                        x2 + 30, y + 24, faded3, nullptr,
+                        message3.c_str(), letter_spacing);
 
     x -= 1;
 
     // Reset when longest message scrolls off screen
-    if (x + std::max(len1, len2) < 0) {
+    if (x + std::max(len1, std::max(len2, len3)) < 0) {
       x = canvas->width();
     }
 
