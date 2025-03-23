@@ -26,8 +26,6 @@
 #include <exception>
 #include <Magick++.h>
 #include <magick/image.h>
-#include <iostream>
-
 
 using rgb_matrix::Canvas;
 using rgb_matrix::RGBMatrix;
@@ -80,45 +78,22 @@ static ImageVector LoadImageAndScaleImage(const char *filename,
 
 // Copy an image to a Canvas. Note, the RGBMatrix is implementing the Canvas
 // interface as well as the FrameCanvas we use in the double-buffering of the
-// // animted image.
-// void CopyImageToCanvas(const Magick::Image &image, Canvas *canvas) {
-//   const int offset_x = 0, offset_y = 0;  // If you want to move the image.
-//   std::cout << "Copying image to canvas..." << std::endl;
-//   // Copy all the pixels to the canvas.
-//   for (size_t y = 0; y < image.rows(); ++y) {
-//     for (size_t x = 0; x < image.columns(); ++x) {
-//       const Magick::Color &c = image.pixelColor(x, y);
-//       if (c.alphaQuantum() < 256) {
-//         canvas->SetPixel(x + offset_x, y + offset_y,
-//                          ScaleQuantumToChar(c.redQuantum()),
-//                          ScaleQuantumToChar(c.greenQuantum()),
-//                          ScaleQuantumToChar(c.blueQuantum()));
-//       }
-//     }
-//   }
-// }
+// animted image.
 void CopyImageToCanvas(const Magick::Image &image, Canvas *canvas) {
-  const int offset_x = 0, offset_y = 0;
-  std::cout << "Copying image to canvas..." << std::endl;
-
+  const int offset_x = 0, offset_y = 0;  // If you want to move the image.
+  // Copy all the pixels to the canvas.
   for (size_t y = 0; y < image.rows(); ++y) {
     for (size_t x = 0; x < image.columns(); ++x) {
       const Magick::Color &c = image.pixelColor(x, y);
       if (c.alphaQuantum() < 256) {
-        uint8_t r = ScaleQuantumToChar(c.redQuantum());
-        uint8_t g = ScaleQuantumToChar(c.greenQuantum());
-        uint8_t b = ScaleQuantumToChar(c.blueQuantum());
-        canvas->SetPixel(x + offset_x, y + offset_y, r, g, b);
-
-        if (x == 0 && y == 0) {  // Print just the first pixel
-          std::cout << "First pixel: (" << (int)r << ", " << (int)g << ", " << (int)b << ")" << std::endl;
-        }
+        canvas->SetPixel(x + offset_x, y + offset_y,
+                         ScaleQuantumToChar(c.redQuantum()),
+                         ScaleQuantumToChar(c.greenQuantum()),
+                         ScaleQuantumToChar(c.blueQuantum()));
       }
     }
   }
 }
-
-
 
 // An animated image has to constantly swap to the next frame.
 // We're using double-buffering and fill an offscreen buffer first, then show.
@@ -166,21 +141,12 @@ int main(int argc, char *argv[]) {
   ImageVector images = LoadImageAndScaleImage(filename,
                                               matrix->width(),
                                               matrix->height());
-  std::cout << "Loaded image: " << filename << " | Total frames: " << images.size() << std::endl;
   switch (images.size()) {
   case 0:   // failed to load image.
     break;
   case 1:   // Simple example: one image to show
-    // CopyImageToCanvas(images[0], matrix);
-    // while (!interrupt_received) sleep(1000);  // Until Ctrl-C is pressed
-    // Fill the entire matrix with bright red to see if anything appears
-    for (int y = 0; y < matrix->height(); ++y) {
-        for (int x = 0; x < matrix->width(); ++x) {
-            matrix->SetPixel(x, y, 255, 0, 0);  // Red pixels everywhere
-        }
-    }
-    while (!interrupt_received) sleep(1000);  // Keep it on screen
-
+    CopyImageToCanvas(images[0], matrix);
+    while (!interrupt_received) sleep(1000);  // Until Ctrl-C is pressed
     break;
   default:  // More than one image: this is an animation.
     ShowAnimatedImage(images, matrix);
