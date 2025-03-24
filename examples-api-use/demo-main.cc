@@ -756,6 +756,8 @@ public:
   void Run() override {
     // Set a random target_
     //target_ = rand() & 0xFFFFFF;
+    int generation_count = 0;
+
 
     // Show the target image directly on the matrix (for confirmation)
     for (int i = 0; i < popSize_; ++i) {
@@ -779,7 +781,7 @@ public:
       swap();
       sort();
       mate();
-      std::random_shuffle (children_, children_ + popSize_, rnd);
+      //std::random_shuffle (children_, children_ + popSize_, rnd);
 
       // Draw citizens to canvas
       for(int i=0; i < popSize_; i++) {
@@ -788,6 +790,16 @@ public:
         int y = (int)(i / width_);
         canvas()->SetPixel(x, y, R(c), G(c), B(c));
       }
+
+      if (generation_count % 100 == 0) {
+        int index = 55;
+        printf("Pixel[%d]: target = %06X, current = %06X, fitness = %d\n",
+              index,
+              targetPixels[index],
+              children_[index].dna,
+              calcFitness(children_[index].dna, targetPixels[index]));
+      }
+
 
       // When we reach the 85% fitness threshold...
       if(is85PercentFit()) {
@@ -853,25 +865,25 @@ private:
   /// the most fit members and some others are allowed to reproduce
   /// to the next generation
 void sort() {
-  // Step 1: Create a vector of (index, citizen) pairs
-  std::vector<std::pair<int, citizen>> indexed;
-  indexed.reserve(popSize_);
+  std::vector<std::pair<int, citizen>> indexedParents;
+
   for (int i = 0; i < popSize_; ++i) {
-    indexed.push_back({i, parents_[i]});
+    indexedParents.emplace_back(i, parents_[i]);
   }
 
-  // Step 2: Sort by fitness to corresponding target pixel
-  std::sort(indexed.begin(), indexed.end(),
+  std::sort(indexedParents.begin(), indexedParents.end(),
             [](const std::pair<int, citizen>& a, const std::pair<int, citizen>& b) {
-              return calcFitness(a.second.dna, targetPixels[a.first]) <
-                     calcFitness(b.second.dna, targetPixels[b.first]);
+              int fitnessA = calcFitness(a.second.dna, targetPixels[a.first]);
+              int fitnessB = calcFitness(b.second.dna, targetPixels[b.first]);
+              return fitnessA < fitnessB;
             });
 
-  // Step 3: Copy sorted citizens back into parents_
+  // Put sorted citizens back in parents_ array
   for (int i = 0; i < popSize_; ++i) {
-    parents_[i] = indexed[i].second;
+    parents_[i] = indexedParents[i].second;
   }
 }
+
 
 
 
@@ -879,28 +891,35 @@ void sort() {
   /// randomly select 2 parents of (near)elite fitness and determine
   /// how they will mate. after mating, randomly mutate citizens
   void mate() {
-    // Adjust these for fun and profit
-    const float eliteRate = 0.30f;
-    const float mutationRate = 0.20f;
+    // 30% of best fittign pizels are directly passed to next generation
+    const float eliteRate = 0.5f;
+    const float mutationRate = 0.05f; //20% chance opf mutation for every new child
 
     const int numElite = popSize_ * eliteRate;
+    //preserve top n parents
     for (int i = 0; i < numElite; ++i) {
       children_[i] = parents_[i];
     }
 
+    //the non elites are mutated
     for (int i = numElite; i < popSize_; ++i) {
-      //select the parents randomly
-      const float sexuallyActive = 1.0 - eliteRate;
-      const int p1 = rand() % (int)(popSize_ * sexuallyActive);
-      const int p2 = rand() % (int)(popSize_ * sexuallyActive);
-      const unsigned matingMask = (~0u) << (rand() % bitsPerPixel);
+      //preserve pixel identity
+      int idx = i;
 
-      // Make a baby
-      unsigned baby = (parents_[p1].dna & matingMask)
-        | (parents_[p2].dna & ~matingMask);
+      //pick two parents near the current pixel index 
+      // tryign to limit mating to be local --> pixels should evolve in place 
+      int range = 5; //experiment with this value
+      int p1 = std::max(0, idx - (rand()%range));
+      int p2 = std::min(popSize_ - 1, idx + (rand() % range));
+
+      //determines offspring color --> takes some bits from parent 1 the rest from parent 2
+      const unsigned matingMask = (~0u) << (rand() % bitsPerPixel);
+      unsigned baby = (parents_[p1].dna & matingMask) | (parents_[p2].dna & ~matingMask);
       children_[i].dna = baby;
 
-      // Mutate randomly based on mutation rate
+
+      // Mutate randomly based on mutation rate 
+      //20 % chance randomly flipped bit in the color this prevents getting stuck in local minima
       if ((rand() / (float)RAND_MAX) < mutationRate) {
         mutate(children_[i]);
       }
