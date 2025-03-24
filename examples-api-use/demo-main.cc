@@ -1,15 +1,6 @@
-// -*- mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; -*-
-//
-// This code is public domain
-// (but note, once linked against the led-matrix library, this is
-// covered by the GPL v2)
-//
-// This is a grab-bag of various demos and not very readable.
 #include "led-matrix.h"
-
 #include "pixel-mapper.h"
 #include "graphics.h"
-
 #include <assert.h>
 #include <getopt.h>
 #include <limits.h>
@@ -19,15 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
 #include <algorithm>
-
 #include <Magick++.h>
 #include <magick/image.h>
 #include <vector>
+
 using ImageVector = std::vector<Magick::Image>;
-
-
 using std::min;
 using std::max;
 
@@ -54,7 +42,6 @@ private:
   Canvas *const canvas_;
 };
 
-
 ImageVector LoadImageAndScaleImage(const char *filename,
                                    int target_width,
                                    int target_height) {
@@ -79,30 +66,381 @@ ImageVector LoadImageAndScaleImage(const char *filename,
 
 std::vector<uint32_t> targetPixels;  // Holds 0xRRGGBB for each pixel
 
+//*  *
 
-/*
- * The following are demo image generators. They all use the utility
- * class DemoRunner to generate new frames.
- */
-
-class SimpleSquare : public DemoRunner {
+class GeneticColors : public DemoRunner {
 public:
-  SimpleSquare(Canvas *m) : DemoRunner(m) {}
-  void Run() override {
-    const int width = canvas()->width() - 1;
-    const int height = canvas()->height() - 1;
-    // Borders
-    DrawLine(canvas(), 0, 0,      width, 0,      Color(255, 0, 0));
-    DrawLine(canvas(), 0, height, width, height, Color(255, 255, 0));
-    DrawLine(canvas(), 0, 0,      0,     height, Color(0, 0, 255));
-    DrawLine(canvas(), width, 0,  width, height, Color(0, 255, 0));
+  GeneticColors(Canvas *m, int delay_ms = 200)
+    : DemoRunner(m), delay_ms_(delay_ms) {
+    width_ = canvas()->width();
+    height_ = canvas()->height();
+    popSize_ = width_ * height_;
 
-    // Diagonals.
-    DrawLine(canvas(), 0, 0,        width, height, Color(255, 255, 255));
-    DrawLine(canvas(), 0, height, width, 0,        Color(255,   0, 255));
+    // Allocate memory
+    children_ = new citizen[popSize_];
+    parents_ = new citizen[popSize_];
+    srand(time(NULL));
   }
+
+  ~GeneticColors() {
+    delete [] children_;
+    delete [] parents_;
+  }
+
+  static int rnd (int i) { return rand() % i; }
+
+  void Run() override {
+    // Set a random target_
+    //target_ = rand() & 0xFFFFFF;
+    int generation_count = 0;
+
+
+    // Show the target image directly on the matrix (for confirmation)
+    for (int i = 0; i < popSize_; ++i) {
+      int x = i % width_;
+      int y = i / width_;
+      uint32_t rgb = targetPixels[i];
+      canvas()->SetPixel(x, y,
+                        (rgb >> 16) & 0xFF,
+                        (rgb >> 8) & 0xFF,
+                        rgb & 0xFF);
+    }
+    usleep(2000000); // show for 2 seconds
+
+
+    // Create the first generation of random children_
+    for (int i = 0; i < popSize_; ++i) {
+      children_[i].dna = rand() & 0xFFFFFF;
+    }
+    // Copy initial children into parents to start
+    for (int i = 0; i < popSize_; ++i) {
+      parents_[i] = children_[i];
+    }
+
+
+    while (!interrupt_received) {
+      swap();
+      sort();
+      mate();
+
+      // Draw citizens to canvas
+      for(int i=0; i < popSize_; i++) {
+        int c = children_[i].dna;
+        int x = i % width_;
+        int y = (int)(i / width_);
+        canvas()->SetPixel(x, y, R(c), G(c), B(c));
+      }
+
+      if (generation_count % 100 == 0) {
+        int index = 55;
+        printf("Pixel[%d]: target = %06X, current = %06X, fitness = %d\n",
+              index,
+              targetPixels[index],
+              children_[index].dna,
+              calcFitness(children_[index].dna, targetPixels[index]));
+      }
+
+
+      // When we reach the 85% fitness threshold...
+      if(is85PercentFit()) {
+        // ...set a new random target_
+       // target_ = rand() & 0xFFFFFF;
+
+        // Randomly mutate everyone for sake of new colors
+        for (int i = 0; i < popSize_; ++i) {
+          mutate(children_[i]);
+        }
+      }
+      //usleep(delay_ms_ * 1000);
+      usleep(50 * 1000);
+    }
+  }
+
+private:
+  /// citizen will hold dna information, a 24-bit color value.
+  struct citizen {
+    citizen() { }
+
+    citizen(int chrom)
+      : dna(chrom) {
+    }
+
+    int dna;
+  };
+
+  /// for sorting by fitness
+  class comparer {
+  public:
+    comparer(citizen* parents) : parents_(parents) {}
+
+    inline bool operator() (const citizen& c1, const citizen& c2) {
+      int i1 = &c1 - parents_;
+      int i2 = &c2 - parents_;
+      return (calcFitness(c1.dna, targetPixels[i1]) < calcFitness(c2.dna, targetPixels[i2]));
+    }
+
+  private:
+    citizen* parents_;  // Pointer to outer class's parents_ array
+  };
+
+
+
+  static int R(const int cit) { return at(cit, 16); }
+  static int G(const int cit) { return at(cit, 8); }
+  static int B(const int cit) { return at(cit, 0); }
+  static int at(const int v, const  int offset) { return (v >> offset) & 0xFF; }
+
+  /// fitness here is how "similar" the color is to the target
+  static int calcFitness(const int value, const int target) {
+  int r1 = (value >> 16) & 0xFF;
+  int g1 = (value >> 8) & 0xFF;
+  int b1 = value & 0xFF;
+
+  int r2 = (target >> 16) & 0xFF;
+  int g2 = (target >> 8) & 0xFF;
+  int b2 = target & 0xFF;
+
+  return (r1 - r2)*(r1 - r2) + (g1 - g2)*(g1 - g2) + (b1 - b2)*(b1 - b2);
+}
+
+  /// sort by fitness so the most fit citizens are at the top of parents_
+  /// this is to establish an elite population of greatest fitness
+  /// the most fit members and some others are allowed to reproduce
+  /// to the next generation
+void sort() {
+  std::vector<std::pair<int, citizen>> indexedParents;
+
+  for (int i = 0; i < popSize_; ++i) {
+    indexedParents.emplace_back(i, parents_[i]);
+  }
+
+  std::sort(indexedParents.begin(), indexedParents.end(),
+            [](const std::pair<int, citizen>& a, const std::pair<int, citizen>& b) {
+              int fitnessA = calcFitness(a.second.dna, targetPixels[a.first]);
+              int fitnessB = calcFitness(b.second.dna, targetPixels[b.first]);
+              return fitnessA < fitnessB;
+            });
+
+  // Put sorted citizens back in parents_ array
+  for (int i = 0; i < popSize_; ++i) {
+    parents_[i] = indexedParents[i].second;
+  }
+}
+
+  /// let the elites continue to the next generation children
+  /// randomly select 2 parents of (near)elite fitness and determine
+  /// how they will mate. after mating, randomly mutate citizens
+  void mate() {
+    const float eliteRate = 0.1f; // Keep only 10% elite
+    const float mutationRate = 0.5f; // 20% chance of mutation
+
+    const int numElite = popSize_ * eliteRate;
+
+    // Preserve top elite pixels
+    for (int i = 0; i < numElite; ++i) {
+        children_[i] = parents_[i];
+    }
+
+    // Mutate the rest of the population
+    for (int i = numElite; i < popSize_; ++i) {
+        children_[i] = parents_[i]; // Copy parent
+
+        // Mutate based on mutation rate
+        if ((rand() / (float)RAND_MAX) < mutationRate) {
+            mutate(children_[i]);
+        }
+    }
+}
+
+  /// parents make children,
+  /// children become parents,
+  /// and they make children...
+  void swap() {
+    citizen* temp = parents_;
+    parents_ = children_;
+    children_ = temp;
+  }
+
+  void mutate(citizen& c) {
+    // Flip a random bit
+    c.dna ^= 1 << (rand() % bitsPerPixel);
+  }
+
+  /// can adjust this threshold to make transition to new target seamless
+  bool is85PercentFit() {
+    int numFit = 0;
+    for (int i = 0; i < popSize_; ++i) {
+      if (calcFitness(children_[i].dna, targetPixels[i]) < 1) {
+        ++numFit;
+      }
+    }
+    return ((numFit / (float)popSize_) > 0.85f);
+  }
+
+  static const int bitsPerPixel = 24;
+  int popSize_;
+  int width_, height_;
+  int delay_ms_;
+  int target_;
+  citizen* children_;
+  citizen* parents_;
 };
 
+
+static int usage(const char *progname) {
+  fprintf(stderr, "usage: %s <options> -D <demo-nr> [optional parameter]\n",
+          progname);
+  fprintf(stderr, "Options:\n");
+  fprintf(stderr,
+          "\t-D <demo-nr>              : Always needs to be set\n"
+          );
+
+
+  rgb_matrix::PrintMatrixFlags(stderr);
+
+  fprintf(stderr, "Demos, choosen with -D\n");
+  fprintf(stderr, "\t0  - some rotating square\n"
+          "\t1  - forward scrolling an image (-m <scroll-ms>)\n"
+          "\t2  - backward scrolling an image (-m <scroll-ms>)\n"
+          "\t3  - test image: a square\n"
+          "\t4  - Pulsing color\n"
+          "\t5  - Grayscale Block\n"
+          "\t6  - Abelian sandpile model (-m <time-step-ms>)\n"
+          "\t7  - Conway's game of life (-m <time-step-ms>)\n"
+          "\t8  - Langton's ant (-m <time-step-ms>)\n"
+          "\t9  - Volume bars (-m <time-step-ms>)\n"
+          "\t10 - Evolution of color (-m <time-step-ms>)\n"
+          "\t11 - Brightness pulse generator\n" 
+          "\t12 - Portal animation by Catherine\n");
+
+  fprintf(stderr, "Example:\n\t%s -D 1 runtext.ppm\n"
+          "Scrolls the runtext until Ctrl-C is pressed\n", progname);
+  return 1;
+}
+
+int main(int argc, char *argv[]) {
+  Magick::InitializeMagick(*argv);  // ✅ Put this as the first line
+  int demo = -1;
+  int scroll_ms = 30;
+
+  const char *demo_parameter = NULL;
+  RGBMatrix::Options matrix_options;
+  rgb_matrix::RuntimeOptions runtime_opt;
+
+  // These are the defaults when no command-line flags are given.
+  matrix_options.rows = 32;
+  matrix_options.chain_length = 1;
+  matrix_options.parallel = 1;
+
+  // First things first: extract the command line flags that contain
+  // relevant matrix options.
+  if (!ParseOptionsFromFlags(&argc, &argv, &matrix_options, &runtime_opt)) {
+    return usage(argv[0]);
+  }
+
+  int opt;
+  while ((opt = getopt(argc, argv, "dD:r:P:c:p:b:m:LR:")) != -1) {
+    switch (opt) {
+    case 'D':
+      demo = atoi(optarg);
+      break;
+
+    case 'm':
+      scroll_ms = atoi(optarg);
+      break;
+
+    default: /* '?' */
+      return usage(argv[0]);
+    }
+  }
+
+  if (optind < argc) {
+    demo_parameter = argv[optind];
+  }
+
+  if (demo < 0) {
+    fprintf(stderr, TERM_ERR "Expected required option -D <demo>\n" TERM_NORM);
+    return usage(argv[0]);
+  }
+
+  RGBMatrix *matrix = RGBMatrix::CreateFromOptions(matrix_options, runtime_opt);
+  if (matrix == NULL)
+    return 1;
+
+  printf("Size: %dx%d. Hardware gpio mapping: %s\n",
+         matrix->width(), matrix->height(), matrix_options.hardware_mapping);
+
+  Canvas *canvas = matrix;
+
+  ImageVector images = LoadImageAndScaleImage(demo_parameter,
+                                            matrix->width(),
+                                              matrix->height());
+  if (images.empty()) {
+    fprintf(stderr, "Failed to load target image.\n");
+    return 1;
+  }
+
+  const Magick::Image &targetImage = images[0];
+  targetPixels.clear();  // Clear any existing data
+  for (size_t y = 0; y < targetImage.rows(); ++y) {
+    for (size_t x = 0; x < targetImage.columns(); ++x) {
+      const Magick::Color &c = targetImage.pixelColor(x, y);
+      uint32_t rgb = (ScaleQuantumToChar(c.redQuantum()) << 16) |
+                    (ScaleQuantumToChar(c.greenQuantum()) << 8) |
+                    ScaleQuantumToChar(c.blueQuantum());
+      targetPixels.push_back(rgb);
+    }
+  }
+
+  if (targetPixels.size() != matrix->width() * matrix->height()) {
+  fprintf(stderr, TERM_ERR "ERROR: targetPixels size (%lu) does not match matrix size (%d)\n" TERM_NORM,
+          targetPixels.size(), matrix->width() * matrix->height());
+  return 1;
+}
+  // The DemoRunner objects are filling
+  // the matrix continuously.
+  DemoRunner *demo_runner = NULL;
+  switch (demo) {
+  case 3:
+    demo_runner = new SimpleSquare(canvas);
+    break;
+
+  case 10:
+    demo_runner = new GeneticColors(canvas, scroll_ms);
+    break;
+
+  }
+
+  if (demo_runner == NULL)
+    return usage(argv[0]);
+
+  if (demo == 10 && demo_parameter == NULL) {
+  fprintf(stderr, TERM_ERR "Demo 10 requires a target image filename.\n" TERM_NORM);
+  return usage(argv[0]);
+}
+
+
+  // Set up an interrupt handler to be able to stop animations while they go
+  // on. Each demo tests for while (!interrupt_received) {},
+  // so they exit as soon as they get a signal.
+  signal(SIGTERM, InterruptHandler);
+  signal(SIGINT, InterruptHandler);
+
+  printf("Press <CTRL-C> to exit and reset LEDs\n");
+
+  // Now, run our particular demo; it will exit when it sees interrupt_received.
+  demo_runner->Run();
+
+  delete demo_runner;
+  delete canvas;
+
+  printf("Received CTRL-C. Exiting.\n");
+  return 0;
+}
+
+
+
+/////
 
 // SIMPLE PORTAL: CATHERINE EXPERIMENTING 
 // class PortalEffect : public DemoRunner {
@@ -728,386 +1066,3 @@ public:
 
 /// end evolutiuon 
 
-
-/// Genetic Colors
-/// A genetic algorithm to evolve colors
-/// by bbhsu2 + anonymous
-class GeneticColors : public DemoRunner {
-public:
-  GeneticColors(Canvas *m, int delay_ms = 200)
-    : DemoRunner(m), delay_ms_(delay_ms) {
-    width_ = canvas()->width();
-    height_ = canvas()->height();
-    popSize_ = width_ * height_;
-
-    // Allocate memory
-    children_ = new citizen[popSize_];
-    parents_ = new citizen[popSize_];
-    srand(time(NULL));
-  }
-
-  ~GeneticColors() {
-    delete [] children_;
-    delete [] parents_;
-  }
-
-  static int rnd (int i) { return rand() % i; }
-
-  void Run() override {
-    // Set a random target_
-    //target_ = rand() & 0xFFFFFF;
-    int generation_count = 0;
-
-
-    // Show the target image directly on the matrix (for confirmation)
-    for (int i = 0; i < popSize_; ++i) {
-      int x = i % width_;
-      int y = i / width_;
-      uint32_t rgb = targetPixels[i];
-      canvas()->SetPixel(x, y,
-                        (rgb >> 16) & 0xFF,
-                        (rgb >> 8) & 0xFF,
-                        rgb & 0xFF);
-    }
-    usleep(2000000); // show for 2 seconds
-
-
-    // Create the first generation of random children_
-    for (int i = 0; i < popSize_; ++i) {
-      children_[i].dna = rand() & 0xFFFFFF;
-    }
-
-    while (!interrupt_received) {
-      swap();
-      sort();
-      mate();
-      //std::random_shuffle (children_, children_ + popSize_, rnd);
-
-      // Draw citizens to canvas
-      for(int i=0; i < popSize_; i++) {
-        int c = children_[i].dna;
-        int x = i % width_;
-        int y = (int)(i / width_);
-        canvas()->SetPixel(x, y, R(c), G(c), B(c));
-      }
-
-      if (generation_count % 100 == 0) {
-        int index = 55;
-        printf("Pixel[%d]: target = %06X, current = %06X, fitness = %d\n",
-              index,
-              targetPixels[index],
-              children_[index].dna,
-              calcFitness(children_[index].dna, targetPixels[index]));
-      }
-
-
-      // When we reach the 85% fitness threshold...
-      if(is85PercentFit()) {
-        // ...set a new random target_
-       // target_ = rand() & 0xFFFFFF;
-
-        // Randomly mutate everyone for sake of new colors
-        for (int i = 0; i < popSize_; ++i) {
-          mutate(children_[i]);
-        }
-      }
-      //usleep(delay_ms_ * 1000);
-      usleep(50 * 1000);
-    }
-  }
-
-private:
-  /// citizen will hold dna information, a 24-bit color value.
-  struct citizen {
-    citizen() { }
-
-    citizen(int chrom)
-      : dna(chrom) {
-    }
-
-    int dna;
-  };
-
-  /// for sorting by fitness
-  class comparer {
-  public:
-    comparer(citizen* parents) : parents_(parents) {}
-
-    inline bool operator() (const citizen& c1, const citizen& c2) {
-      int i1 = &c1 - parents_;
-      int i2 = &c2 - parents_;
-      return (calcFitness(c1.dna, targetPixels[i1]) < calcFitness(c2.dna, targetPixels[i2]));
-    }
-
-  private:
-    citizen* parents_;  // Pointer to outer class's parents_ array
-  };
-
-
-
-  static int R(const int cit) { return at(cit, 16); }
-  static int G(const int cit) { return at(cit, 8); }
-  static int B(const int cit) { return at(cit, 0); }
-  static int at(const int v, const  int offset) { return (v >> offset) & 0xFF; }
-
-  /// fitness here is how "similar" the color is to the target
-  static int calcFitness(const int value, const int target) {
-    int diffBits = 0;
-    for (unsigned int diff = value ^ target; diff; diff &= diff - 1) {
-      ++diffBits;
-    }
-    return diffBits;
-  }
-
-
-  /// sort by fitness so the most fit citizens are at the top of parents_
-  /// this is to establish an elite population of greatest fitness
-  /// the most fit members and some others are allowed to reproduce
-  /// to the next generation
-void sort() {
-  std::vector<std::pair<int, citizen>> indexedParents;
-
-  for (int i = 0; i < popSize_; ++i) {
-    indexedParents.emplace_back(i, parents_[i]);
-  }
-
-  std::sort(indexedParents.begin(), indexedParents.end(),
-            [](const std::pair<int, citizen>& a, const std::pair<int, citizen>& b) {
-              int fitnessA = calcFitness(a.second.dna, targetPixels[a.first]);
-              int fitnessB = calcFitness(b.second.dna, targetPixels[b.first]);
-              return fitnessA < fitnessB;
-            });
-
-  // Put sorted citizens back in parents_ array
-  for (int i = 0; i < popSize_; ++i) {
-    parents_[i] = indexedParents[i].second;
-  }
-}
-
-
-
-
-  /// let the elites continue to the next generation children
-  /// randomly select 2 parents of (near)elite fitness and determine
-  /// how they will mate. after mating, randomly mutate citizens
-  void mate() {
-    // 30% of best fittign pizels are directly passed to next generation
-    const float eliteRate = 0.5f;
-    const float mutationRate = 0.05f; //20% chance opf mutation for every new child
-
-    const int numElite = popSize_ * eliteRate;
-    //preserve top n parents
-    for (int i = 0; i < numElite; ++i) {
-      children_[i] = parents_[i];
-    }
-
-    //the non elites are mutated
-    for (int i = numElite; i < popSize_; ++i) {
-      //preserve pixel identity
-      int idx = i;
-
-      //pick two parents near the current pixel index 
-      // tryign to limit mating to be local --> pixels should evolve in place 
-      int range = 5; //experiment with this value
-      int p1 = std::max(0, idx - (rand()%range));
-      int p2 = std::min(popSize_ - 1, idx + (rand() % range));
-
-      //determines offspring color --> takes some bits from parent 1 the rest from parent 2
-      const unsigned matingMask = (~0u) << (rand() % bitsPerPixel);
-      unsigned baby = (parents_[p1].dna & matingMask) | (parents_[p2].dna & ~matingMask);
-      children_[i].dna = baby;
-
-
-      // Mutate randomly based on mutation rate 
-      //20 % chance randomly flipped bit in the color this prevents getting stuck in local minima
-      if ((rand() / (float)RAND_MAX) < mutationRate) {
-        mutate(children_[i]);
-      }
-    }
-  }
-
-  /// parents make children,
-  /// children become parents,
-  /// and they make children...
-  void swap() {
-    citizen* temp = parents_;
-    parents_ = children_;
-    children_ = temp;
-  }
-
-  void mutate(citizen& c) {
-    // Flip a random bit
-    c.dna ^= 1 << (rand() % bitsPerPixel);
-  }
-
-  /// can adjust this threshold to make transition to new target seamless
-  bool is85PercentFit() {
-    int numFit = 0;
-    for (int i = 0; i < popSize_; ++i) {
-      if (calcFitness(children_[i].dna, targetPixels[i]) < 1) {
-        ++numFit;
-      }
-    }
-    return ((numFit / (float)popSize_) > 0.85f);
-  }
-
-  static const int bitsPerPixel = 24;
-  int popSize_;
-  int width_, height_;
-  int delay_ms_;
-  int target_;
-  citizen* children_;
-  citizen* parents_;
-};
-
-
-static int usage(const char *progname) {
-  fprintf(stderr, "usage: %s <options> -D <demo-nr> [optional parameter]\n",
-          progname);
-  fprintf(stderr, "Options:\n");
-  fprintf(stderr,
-          "\t-D <demo-nr>              : Always needs to be set\n"
-          );
-
-
-  rgb_matrix::PrintMatrixFlags(stderr);
-
-  fprintf(stderr, "Demos, choosen with -D\n");
-  fprintf(stderr, "\t0  - some rotating square\n"
-          "\t1  - forward scrolling an image (-m <scroll-ms>)\n"
-          "\t2  - backward scrolling an image (-m <scroll-ms>)\n"
-          "\t3  - test image: a square\n"
-          "\t4  - Pulsing color\n"
-          "\t5  - Grayscale Block\n"
-          "\t6  - Abelian sandpile model (-m <time-step-ms>)\n"
-          "\t7  - Conway's game of life (-m <time-step-ms>)\n"
-          "\t8  - Langton's ant (-m <time-step-ms>)\n"
-          "\t9  - Volume bars (-m <time-step-ms>)\n"
-          "\t10 - Evolution of color (-m <time-step-ms>)\n"
-          "\t11 - Brightness pulse generator\n" 
-          "\t12 - Portal animation by Catherine\n");
-
-  fprintf(stderr, "Example:\n\t%s -D 1 runtext.ppm\n"
-          "Scrolls the runtext until Ctrl-C is pressed\n", progname);
-  return 1;
-}
-
-int main(int argc, char *argv[]) {
-  Magick::InitializeMagick(*argv);  // ✅ Put this as the first line
-  int demo = -1;
-  int scroll_ms = 30;
-
-  const char *demo_parameter = NULL;
-  RGBMatrix::Options matrix_options;
-  rgb_matrix::RuntimeOptions runtime_opt;
-
-  // These are the defaults when no command-line flags are given.
-  matrix_options.rows = 32;
-  matrix_options.chain_length = 1;
-  matrix_options.parallel = 1;
-
-  // First things first: extract the command line flags that contain
-  // relevant matrix options.
-  if (!ParseOptionsFromFlags(&argc, &argv, &matrix_options, &runtime_opt)) {
-    return usage(argv[0]);
-  }
-
-  int opt;
-  while ((opt = getopt(argc, argv, "dD:r:P:c:p:b:m:LR:")) != -1) {
-    switch (opt) {
-    case 'D':
-      demo = atoi(optarg);
-      break;
-
-    case 'm':
-      scroll_ms = atoi(optarg);
-      break;
-
-    default: /* '?' */
-      return usage(argv[0]);
-    }
-  }
-
-  if (optind < argc) {
-    demo_parameter = argv[optind];
-  }
-
-  if (demo < 0) {
-    fprintf(stderr, TERM_ERR "Expected required option -D <demo>\n" TERM_NORM);
-    return usage(argv[0]);
-  }
-
-  RGBMatrix *matrix = RGBMatrix::CreateFromOptions(matrix_options, runtime_opt);
-  if (matrix == NULL)
-    return 1;
-
-  printf("Size: %dx%d. Hardware gpio mapping: %s\n",
-         matrix->width(), matrix->height(), matrix_options.hardware_mapping);
-
-  Canvas *canvas = matrix;
-
-  ImageVector images = LoadImageAndScaleImage(demo_parameter,
-                                            matrix->width(),
-                                              matrix->height());
-  if (images.empty()) {
-    fprintf(stderr, "Failed to load target image.\n");
-    return 1;
-  }
-
-  const Magick::Image &targetImage = images[0];
-  targetPixels.clear();  // Clear any existing data
-  for (size_t y = 0; y < targetImage.rows(); ++y) {
-    for (size_t x = 0; x < targetImage.columns(); ++x) {
-      const Magick::Color &c = targetImage.pixelColor(x, y);
-      uint32_t rgb = (ScaleQuantumToChar(c.redQuantum()) << 16) |
-                    (ScaleQuantumToChar(c.greenQuantum()) << 8) |
-                    ScaleQuantumToChar(c.blueQuantum());
-      targetPixels.push_back(rgb);
-    }
-  }
-
-  if (targetPixels.size() != matrix->width() * matrix->height()) {
-  fprintf(stderr, TERM_ERR "ERROR: targetPixels size (%lu) does not match matrix size (%d)\n" TERM_NORM,
-          targetPixels.size(), matrix->width() * matrix->height());
-  return 1;
-}
-  // The DemoRunner objects are filling
-  // the matrix continuously.
-  DemoRunner *demo_runner = NULL;
-  switch (demo) {
-  case 3:
-    demo_runner = new SimpleSquare(canvas);
-    break;
-
-  case 10:
-    demo_runner = new GeneticColors(canvas, scroll_ms);
-    break;
-
-  }
-
-  if (demo_runner == NULL)
-    return usage(argv[0]);
-
-  if (demo == 10 && demo_parameter == NULL) {
-  fprintf(stderr, TERM_ERR "Demo 10 requires a target image filename.\n" TERM_NORM);
-  return usage(argv[0]);
-}
-
-
-  // Set up an interrupt handler to be able to stop animations while they go
-  // on. Each demo tests for while (!interrupt_received) {},
-  // so they exit as soon as they get a signal.
-  signal(SIGTERM, InterruptHandler);
-  signal(SIGINT, InterruptHandler);
-
-  printf("Press <CTRL-C> to exit and reset LEDs\n");
-
-  // Now, run our particular demo; it will exit when it sees interrupt_received.
-  demo_runner->Run();
-
-  delete demo_runner;
-  delete canvas;
-
-  printf("Received CTRL-C. Exiting.\n");
-  return 0;
-}
