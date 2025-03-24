@@ -1,6 +1,3 @@
-// SPDX-License-IdentifierText: 2024 Catherine + ChatGPT
-// SPDX-License-Identifier: MIT
-
 #include "led-matrix.h"
 #include "graphics.h"
 

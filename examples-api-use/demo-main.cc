@@ -1481,16 +1481,13 @@ private:
 
 /// end evolutiuon 
 
-#include <algorithm>
-#include <cstdlib>
-#include <ctime>
-#include <unistd.h>
-#include <vector>
-#include <queue>
 
-class ColorEvolution : public DemoRunner {
+/// Genetic Colors
+/// A genetic algorithm to evolve colors
+/// by bbhsu2 + anonymous
+class GeneticColors : public DemoRunner {
 public:
-  ColorEvolution(Canvas *m, int delay_ms = 200)
+  GeneticColors(Canvas *m, int delay_ms = 200)
     : DemoRunner(m), delay_ms_(delay_ms) {
     width_ = canvas()->width();
     height_ = canvas()->height();
@@ -1500,19 +1497,9 @@ public:
     children_ = new citizen[popSize_];
     parents_ = new citizen[popSize_];
     srand(time(NULL));
-
-    // Initialize the chain reaction starting point
-    startX_ = 0; // Start from the top-left corner
-    startY_ = 0;
-    activePixels_.push(startX_ + startY_ * width_);
-
-    // Initialize all pixels with random DNA
-    for (int i = 0; i < popSize_; ++i) {
-      children_[i].dna = rand() & 0xFFFFFF;
-    }
   }
 
-  ~ColorEvolution() {
+  ~GeneticColors() {
     delete [] children_;
     delete [] parents_;
   }
@@ -1523,12 +1510,19 @@ public:
     // Set a random target_
     target_ = rand() & 0xFFFFFF;
 
+    // Create the first generation of random children_
+    for (int i = 0; i < popSize_; ++i) {
+      children_[i].dna = rand() & 0xFFFFFF;
+    }
+
     while (!interrupt_received) {
-      // Evolve the active pixels and spread the chain reaction
-      evolveAndSpread();
+      swap();
+      sort();
+      mate();
+      std::random_shuffle (children_, children_ + popSize_, rnd);
 
       // Draw citizens to canvas
-      for(int i = 0; i < popSize_; i++) {
+      for(int i=0; i < popSize_; i++) {
         int c = children_[i].dna;
         int x = i % width_;
         int y = (int)(i / width_);
@@ -1540,7 +1534,7 @@ public:
         // ...set a new random target_
         target_ = rand() & 0xFFFFFF;
 
-        // Randomly mutate everyone for new colors
+        // Randomly mutate everyone for sake of new colors
         for (int i = 0; i < popSize_; ++i) {
           mutate(children_[i]);
         }
@@ -1590,13 +1584,61 @@ private:
     return diffBits;
   }
 
-  /// mutate a citizen's DNA
+  /// sort by fitness so the most fit citizens are at the top of parents_
+  /// this is to establish an elite population of greatest fitness
+  /// the most fit members and some others are allowed to reproduce
+  /// to the next generation
+  void sort() {
+    std::sort(parents_, parents_ + popSize_, comparer(target_));
+  }
+
+  /// let the elites continue to the next generation children
+  /// randomly select 2 parents of (near)elite fitness and determine
+  /// how they will mate. after mating, randomly mutate citizens
+  void mate() {
+    // Adjust these for fun and profit
+    const float eliteRate = 0.30f;
+    const float mutationRate = 0.20f;
+
+    const int numElite = popSize_ * eliteRate;
+    for (int i = 0; i < numElite; ++i) {
+      children_[i] = parents_[i];
+    }
+
+    for (int i = numElite; i < popSize_; ++i) {
+      //select the parents randomly
+      const float sexuallyActive = 1.0 - eliteRate;
+      const int p1 = rand() % (int)(popSize_ * sexuallyActive);
+      const int p2 = rand() % (int)(popSize_ * sexuallyActive);
+      const unsigned matingMask = (~0u) << (rand() % bitsPerPixel);
+
+      // Make a baby
+      unsigned baby = (parents_[p1].dna & matingMask)
+        | (parents_[p2].dna & ~matingMask);
+      children_[i].dna = baby;
+
+      // Mutate randomly based on mutation rate
+      if ((rand() / (float)RAND_MAX) < mutationRate) {
+        mutate(children_[i]);
+      }
+    }
+  }
+
+  /// parents make children,
+  /// children become parents,
+  /// and they make children...
+  void swap() {
+    citizen* temp = parents_;
+    parents_ = children_;
+    children_ = temp;
+  }
+
   void mutate(citizen& c) {
     // Flip a random bit
     c.dna ^= 1 << (rand() % bitsPerPixel);
   }
 
-  /// check if 85% of the population is fit
+  /// can adjust this threshold to make transition to new target seamless
   bool is85PercentFit() {
     int numFit = 0;
     for (int i = 0; i < popSize_; ++i) {
@@ -1607,118 +1649,14 @@ private:
     return ((numFit / (float)popSize_) > 0.85f);
   }
 
-  /// Evolve and spread the chain reaction
-  void evolveAndSpread() {
-    std::queue<int> nextPixels;
-    while (!activePixels_.empty()) {
-      int pixel = activePixels_.front();
-      activePixels_.pop();
-
-      int x = pixel % width_;
-      int y = pixel / width_;
-
-      // Evolve the current pixel's DNA
-      evolvePixel(pixel);
-
-      // Spread to neighboring pixels
-      for (int dx = -1; dx <= 1; ++dx) {
-        for (int dy = -1; dy <= 1; ++dy) {
-          if (dx == 0 && dy == 0) continue; // Skip the current pixel
-
-          int nx = x + dx;
-          int ny = y + dy;
-          if (nx >= 0 && nx < width_ && ny >= 0 && ny < height_) {
-            int neighborPixel = nx + ny * width_;
-            if (std::find(visitedPixels_.begin(), visitedPixels_.end(), neighborPixel) == visitedPixels_.end()) {
-              visitedPixels_.push_back(neighborPixel);
-              nextPixels.push(neighborPixel);
-
-              // Inherit DNA from the parent pixel with some mutation
-              children_[neighborPixel].dna = children_[pixel].dna;
-              mutate(children_[neighborPixel]);
-            }
-          }
-        }
-      }
-    }
-
-    // Add the next generation of pixels to the active queue
-    activePixels_ = nextPixels;
-  }
-
-  /// Evolve a pixel's DNA based on fitness
-  void evolvePixel(int pixel) {
-    const float mutationRate = 0.1f;
-    if ((rand() / (float)RAND_MAX) < mutationRate) {
-      mutate(children_[pixel]);
-    }
-  }
-
-  int width_, height_;
+  static const int bitsPerPixel = 24;
   int popSize_;
+  int width_, height_;
   int delay_ms_;
   int target_;
-  int startX_, startY_;
   citizen* children_;
   citizen* parents_;
-  std::queue<int> activePixels_;
-  std::vector<int> visitedPixels_;
-  static const int bitsPerPixel = 24;
 };
-
-
-
-using namespace rgb_cube; // Replace with your cube library namespace
-
-// Define a Color struct for easy RGB color management
-struct Color {
-    uint8_t r, g, b;
-    Color(uint8_t r, uint8_t g, uint8_t b) : r(r), g(g), b(b) {}
-};
-
-// Function to generate a random color
-Color randomColor() {
-    return Color(rand() % 256, rand() % 256, rand() % 256);
-}
-
-// Spiral effect function
-void spiralEffect(Cube *cube, int delay_ms = 100) {
-    srand(time(0)); // Seed the random number generator
-    int size = cube->getSize(); // Get the size of the cube (assuming it's cubic)
-    int maxLayers = size / 2;   // Number of layers in the spiral
-
-    while (true) {
-        // Generate a new random color for the spiral
-        Color color = randomColor();
-
-        // Draw the spiral
-        for (int layer = 0; layer < maxLayers; ++layer) {
-            for (int i = layer; i < size - layer; ++i) {
-                cube->setVoxel(i, layer, layer, color.r, color.g, color.b); // Top face
-                cube->setVoxel(layer, i, layer, color.r, color.g, color.b); // Left face
-                cube->setVoxel(size - 1 - layer, i, layer, color.r, color.g, color.b); // Right face
-                cube->setVoxel(i, size - 1 - layer, layer, color.r, color.g, color.b); // Bottom face
-            }
-            cube->render(); // Update the cube display
-            usleep(delay_ms * 1000); // Delay for the animation effect
-            cube->clear(); // Clear the cube for the next frame
-        }
-
-        // Reverse the spiral
-        for (int layer = maxLayers - 1; layer >= 0; --layer) {
-            for (int i = size - 1 - layer; i >= layer; --i) {
-                cube->setVoxel(i, size - 1 - layer, layer, color.r, color.g, color.b); // Bottom face
-                cube->setVoxel(size - 1 - layer, i, layer, color.r, color.g, color.b); // Right face
-                cube->setVoxel(layer, i, layer, color.r, color.g, color.b); // Left face
-                cube->setVoxel(i, layer, layer, color.r, color.g, color.b); // Top face
-            }
-            cube->render(); // Update the cube display
-            usleep(delay_ms * 1000); // Delay for the animation effect
-            cube->clear(); // Clear the cube for the next frame
-        }
-    }
-}
-
 
 
 static int usage(const char *progname) {
@@ -1857,7 +1795,7 @@ int main(int argc, char *argv[]) {
     break;
 
   case 10:
-    demo_runner = new ColorEvolution(canvas, scroll_ms);
+    demo_runner = new GeneticColors(canvas, scroll_ms);
     break;
 
   case 11:
@@ -1868,9 +1806,6 @@ int main(int argc, char *argv[]) {
     demo_runner = new PortalEffect(canvas, 50, 5);
     break;
 
-  case 13:
-    demo_runner = new spiralEffect(cube);
-    break;
   }
 
   if (demo_runner == NULL)
