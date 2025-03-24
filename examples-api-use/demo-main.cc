@@ -148,7 +148,8 @@ public:
 
         // Randomly mutate everyone for sake of new colors
         for (int i = 0; i < popSize_; ++i) {
-          mutate(children_[i]);
+          mutate(children_[i], targetPixels[i]);
+
         }
       }
       //usleep(delay_ms_ * 1000);
@@ -247,7 +248,10 @@ void sort() {
 
         // Mutate based on mutation rate
         if ((rand() / (float)RAND_MAX) < mutationRate) {
-            mutate(children_[i]);
+            //mutate(children_[i], targetPixels[i]);
+            guidedMutate(children_[i], targetPixels[i], 5);  // you can experiment with step sizes (e.g., 1, 2, 5)
+
+
         }
     }
 }
@@ -261,10 +265,44 @@ void sort() {
     children_ = temp;
   }
 
-  void mutate(citizen& c) {
-    // Flip a random bit
-    c.dna ^= 1 << (rand() % bitsPerPixel);
+  void mutate(citizen& c, uint32_t target) {
+    int r = (c.dna >> 16) & 0xFF;
+    int g = (c.dna >> 8) & 0xFF;
+    int b = c.dna & 0xFF;
+
+    int tr = (target >> 16) & 0xFF;
+    int tg = (target >> 8) & 0xFF;
+    int tb = target & 0xFF;
+
+    if (r < tr) ++r; else if (r > tr) --r;
+    if (g < tg) ++g; else if (g > tg) --g;
+    if (b < tb) ++b; else if (b > tb) --b;
+
+    c.dna = (r << 16) | (g << 8) | b;
   }
+
+  void guidedMutate(citizen& c, uint32_t target, int step = 1) {
+    int r = (c.dna >> 16) & 0xFF;
+    int g = (c.dna >> 8) & 0xFF;
+    int b = c.dna & 0xFF;
+
+    int tr = (target >> 16) & 0xFF;
+    int tg = (target >> 8) & 0xFF;
+    int tb = target & 0xFF;
+
+    if (r < tr) r = std::min(255, r + step);
+    else if (r > tr) r = std::max(0, r - step);
+
+    if (g < tg) g = std::min(255, g + step);
+    else if (g > tg) g = std::max(0, g - step);
+
+    if (b < tb) b = std::min(255, b + step);
+    else if (b > tb) b = std::max(0, b - step);
+
+    c.dna = (r << 16) | (g << 8) | b;
+  }
+
+
 
   /// can adjust this threshold to make transition to new target seamless
   bool is85PercentFit() {
@@ -285,6 +323,75 @@ void sort() {
   citizen* children_;
   citizen* parents_;
 };
+
+
+///// 
+
+class GuidedColorEvolution : public DemoRunner {
+public:
+  GuidedColorEvolution(Canvas *canvas, int delay_ms = 50)
+    : DemoRunner(canvas), delay_ms_(delay_ms) {
+    width_ = canvas->width();
+    height_ = canvas->height();
+    popSize_ = width_ * height_;
+    pixels_.resize(popSize_);
+    srand(time(NULL));
+
+    for (int i = 0; i < popSize_; ++i) {
+      pixels_[i] = rand() & 0xFFFFFF;
+    }
+  }
+
+  void Run() override {
+    while (!interrupt_received) {
+      bool allMatch = true;
+
+      for (int i = 0; i < popSize_; ++i) {
+        uint32_t target = targetPixels[i];
+        guidedMutate(pixels_[i], target);
+
+        int x = i % width_;
+        int y = i / width_;
+        canvas()->SetPixel(x, y, 
+                           (pixels_[i] >> 16) & 0xFF,
+                           (pixels_[i] >> 8) & 0xFF,
+                           pixels_[i] & 0xFF);
+
+        if (pixels_[i] != target) allMatch = false;
+      }
+
+      if (allMatch) break;
+      usleep(delay_ms_ * 1000);
+    }
+  }
+
+private:
+  void guidedMutate(uint32_t &color, uint32_t target, int step = 1) {
+    int r = (color >> 16) & 0xFF;
+    int g = (color >> 8) & 0xFF;
+    int b = color & 0xFF;
+
+    int tr = (target >> 16) & 0xFF;
+    int tg = (target >> 8) & 0xFF;
+    int tb = target & 0xFF;
+
+    if (r < tr) r = std::min(255, r + step);
+    else if (r > tr) r = std::max(0, r - step);
+
+    if (g < tg) g = std::min(255, g + step);
+    else if (g > tg) g = std::max(0, g - step);
+
+    if (b < tb) b = std::min(255, b + step);
+    else if (b > tb) b = std::max(0, b - step);
+
+    color = (r << 16) | (g << 8) | b;
+  }
+
+  std::vector<uint32_t> pixels_;
+  int width_, height_, popSize_;
+  int delay_ms_;
+};
+
 
 
 static int usage(const char *progname) {
@@ -401,12 +508,14 @@ int main(int argc, char *argv[]) {
   // the matrix continuously.
   DemoRunner *demo_runner = NULL;
   switch (demo) {
-  case 3:
-    demo_runner = new SimpleSquare(canvas);
-    break;
+  // case 3:
+  //   demo_runner = new SimpleSquare(canvas);
+  //   break;
 
   case 10:
-    demo_runner = new GeneticColors(canvas, scroll_ms);
+    //demo_runner = new GeneticColors(canvas, scroll_ms);
+    demo_runner = new GuidedColorEvolution(canvas, scroll_ms);
+
     break;
 
   }
