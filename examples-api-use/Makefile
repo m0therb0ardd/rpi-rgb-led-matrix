@@ -22,7 +22,8 @@ $(RGB_LIBRARY): FORCE
 	$(MAKE) -C $(RGB_LIBDIR)
 
 demo : demo-main.o $(RGB_LIBRARY)
-	$(CXX) $< -o $@ $(LDFLAGS)
+	$(CXX) $< -o $@ $(LDFLAGS) $(MAGICK_LDFLAGS)
+
 
 minimal-example : minimal-example.o
 input-example : input-example.o
@@ -32,6 +33,9 @@ clock : clock.o
 ledcat : ledcat.o
 pixel-mover : pixel-mover.o
 portal_effect : portal_effect.o
+
+demo-main.o : demo-main.cc
+	$(CXX) -I$(RGB_INCDIR) $(CXXFLAGS) $(MAGICK_CXXFLAGS) -c -o $@ $<
 
 # All the binaries that have the same name as the object file.q
 % : %.o $(RGB_LIBRARY)

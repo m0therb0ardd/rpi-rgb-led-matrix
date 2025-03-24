@@ -22,6 +22,12 @@
 
 #include <algorithm>
 
+#include <Magick++.h>
+#include <magick/image.h>
+#include <vector>
+using ImageVector = std::vector<Magick::Image>;
+
+
 using std::min;
 using std::max;
 
@@ -48,81 +54,36 @@ private:
   Canvas *const canvas_;
 };
 
+
+ImageVector LoadImageAndScaleImage(const char *filename,
+                                   int target_width,
+                                   int target_height) {
+  ImageVector result;
+  ImageVector frames;
+  try {
+    readImages(&frames, filename);
+  } catch (std::exception &e) {
+    fprintf(stderr, "Error loading image: %s\n", e.what());
+    return result;
+  }
+
+  if (frames.empty()) {
+    fprintf(stderr, "No image found in %s.\n", filename);
+    return result;
+  }
+
+  result.push_back(frames[0]);  // Only use first frame
+  result[0].scale(Magick::Geometry(target_width, target_height));
+  return result;
+}
+
+std::vector<uint32_t> targetPixels;  // Holds 0xRRGGBB for each pixel
+
+
 /*
  * The following are demo image generators. They all use the utility
  * class DemoRunner to generate new frames.
  */
-
-
-
-// Simple generator that pulses through RGB and White.
-class ColorPulseGenerator : public DemoRunner {
-public:
-  ColorPulseGenerator(RGBMatrix *m) : DemoRunner(m), matrix_(m) {
-    off_screen_canvas_ = m->CreateFrameCanvas();
-  }
-  void Run() override {
-    uint32_t continuum = 0;
-    while (!interrupt_received) {
-      usleep(5 * 1000);
-      continuum += 1;
-      continuum %= 3 * 255;
-      int r = 0, g = 0, b = 0;
-      if (continuum <= 255) {
-        int c = continuum;
-        b = 255 - c;
-        r = c;
-      } else if (continuum > 255 && continuum <= 511) {
-        int c = continuum - 256;
-        r = 255 - c;
-        g = c;
-      } else {
-        int c = continuum - 512;
-        g = 255 - c;
-        b = c;
-      }
-      off_screen_canvas_->Fill(r, g, b);
-      off_screen_canvas_ = matrix_->SwapOnVSync(off_screen_canvas_);
-    }
-  }
-
-private:
-  RGBMatrix *const matrix_;
-  FrameCanvas *off_screen_canvas_;
-};
-
-// Simple generator that pulses through brightness on red, green, blue and white
-class BrightnessPulseGenerator : public DemoRunner {
-public:
-  BrightnessPulseGenerator(RGBMatrix *m)
-    : DemoRunner(m), matrix_(m) {}
-  void Run() override {
-    const uint8_t max_brightness = matrix_->brightness();
-    const uint8_t c = 255;
-    uint8_t count = 0;
-
-    while (!interrupt_received) {
-      if (matrix_->brightness() < 1) {
-        matrix_->SetBrightness(max_brightness);
-        count++;
-      } else {
-        matrix_->SetBrightness(matrix_->brightness() - 1);
-      }
-
-      switch (count % 4) {
-      case 0: matrix_->Fill(c, 0, 0); break;
-      case 1: matrix_->Fill(0, c, 0); break;
-      case 2: matrix_->Fill(0, 0, c); break;
-      case 3: matrix_->Fill(c, c, c); break;
-      }
-
-      usleep(20 * 1000);
-    }
-  }
-
-private:
-  RGBMatrix *const matrix_;
-};
 
 class SimpleSquare : public DemoRunner {
 public:
@@ -142,96 +103,8 @@ public:
   }
 };
 
-class GrayScaleBlock : public DemoRunner {
-public:
-  GrayScaleBlock(Canvas *m) : DemoRunner(m) {}
-  void Run() override {
-    const int sub_blocks = 16;
-    const int width = canvas()->width();
-    const int height = canvas()->height();
-    const int x_step = max(1, width / sub_blocks);
-    const int y_step = max(1, height / sub_blocks);
-    uint8_t count = 0;
-    while (!interrupt_received) {
-      for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-          int c = sub_blocks * (y / y_step) + x / x_step;
-          switch (count % 4) {
-          case 0: canvas()->SetPixel(x, y, c, c, c); break;
-          case 1: canvas()->SetPixel(x, y, c, 0, 0); break;
-          case 2: canvas()->SetPixel(x, y, 0, c, 0); break;
-          case 3: canvas()->SetPixel(x, y, 0, 0, c); break;
-          }
-        }
-      }
-      count++;
-      sleep(2);
-    }
-  }
-};
 
-// Simple class that generates a rotating block on the screen.
-class RotatingBlockGenerator : public DemoRunner {
-public:
-  RotatingBlockGenerator(Canvas *m) : DemoRunner(m) {}
-
-  uint8_t scale_col(int val, int lo, int hi) {
-    if (val < lo) return 0;
-    if (val > hi) return 255;
-    return 255 * (val - lo) / (hi - lo);
-  }
-
-  void Run() override {
-    const int cent_x = canvas()->width() / 2;
-    const int cent_y = canvas()->height() / 2;
-
-    // The square to rotate (inner square + black frame) needs to cover the
-    // whole area, even if diagonal. Thus, when rotating, the outer pixels from
-    // the previous frame are cleared.
-    const int rotate_square = min(canvas()->width(), canvas()->height()) * 1.41;
-    const int min_rotate = cent_x - rotate_square / 2;
-    const int max_rotate = cent_x + rotate_square / 2;
-
-    // The square to display is within the visible area.
-    const int display_square = min(canvas()->width(), canvas()->height()) * 0.7;
-    const int min_display = cent_x - display_square / 2;
-    const int max_display = cent_x + display_square / 2;
-
-    const float deg_to_rad = 2 * 3.14159265 / 360;
-    int rotation = 0;
-    while (!interrupt_received) {
-      ++rotation;
-      usleep(15 * 1000);
-      rotation %= 360;
-      for (int x = min_rotate; x < max_rotate; ++x) {
-        for (int y = min_rotate; y < max_rotate; ++y) {
-          float rot_x, rot_y;
-          Rotate(x - cent_x, y - cent_x,
-                 deg_to_rad * rotation, &rot_x, &rot_y);
-          if (x >= min_display && x < max_display &&
-              y >= min_display && y < max_display) { // within display square
-            canvas()->SetPixel(rot_x + cent_x, rot_y + cent_y,
-                               scale_col(x, min_display, max_display),
-                               255 - scale_col(y, min_display, max_display),
-                               scale_col(y, min_display, max_display));
-          } else {
-            // black frame.
-            canvas()->SetPixel(rot_x + cent_x, rot_y + cent_y, 0, 0, 0);
-          }
-        }
-      }
-    }
-  }
-
-private:
-  void Rotate(int x, int y, float angle,
-              float *new_x, float *new_y) {
-    *new_x = x * cosf(angle) - y * sinf(angle);
-    *new_y = x * sinf(angle) + y * cosf(angle);
-  }
-};
-
-// //new class catherine
+// SIMPLE PORTAL: CATHERINE EXPERIMENTING 
 // class PortalEffect : public DemoRunner {
 // public:
 //   PortalEffect(Canvas *m, int delay_ms = 50)
@@ -259,835 +132,209 @@ private:
 // };
 
 
+// A COOLER PORTAL WITH EVOLUTIONARY CONCEPTS FOR COLOR GRADIENT AND SHAPE CHANGE
+// //something new testing///////////////
 
-//something new testing///////////////
+// #include <cstdint> // For uint8_t
+// #include <vector>
+// #include <cstdlib>
+// #include <ctime>
+// #include <thread>
+// #include <mutex>
+// #include <algorithm>
+// #include "led-matrix.h" // Include the RGB matrix library
 
-#include <cstdint> // For uint8_t
-#include <vector>
-#include <cstdlib>
-#include <ctime>
-#include <thread>
-#include <mutex>
-#include <algorithm>
-#include "led-matrix.h" // Include the RGB matrix library
+// using namespace rgb_matrix;
 
-using namespace rgb_matrix;
+// // Define a namespace for your custom code
+// namespace MyApp {
+//     // Define the Color struct
+//     struct Color {
+//         uint8_t r, g, b;
+//         Color(uint8_t r, uint8_t g, uint8_t b) : r(r), g(g), b(b) {}
+//     };
 
-// Define a namespace for your custom code
-namespace MyApp {
-    // Define the Color struct
-    struct Color {
-        uint8_t r, g, b;
-        Color(uint8_t r, uint8_t g, uint8_t b) : r(r), g(g), b(b) {}
-    };
+//     // Implement DrawCircle
+//     void DrawCircle(Canvas *canvas, int x, int y, int radius, const Color& color) {
+//         for (int i = -radius; i <= radius; ++i) {
+//             for (int j = -radius; j <= radius; ++j) {
+//                 if (i * i + j * j <= radius * radius) {
+//                     canvas->SetPixel(x + i, y + j, color.r, color.g, color.b);
+//                 }
+//             }
+//         }
+//     }
 
-    // Implement DrawCircle
-    void DrawCircle(Canvas *canvas, int x, int y, int radius, const Color& color) {
-        for (int i = -radius; i <= radius; ++i) {
-            for (int j = -radius; j <= radius; ++j) {
-                if (i * i + j * j <= radius * radius) {
-                    canvas->SetPixel(x + i, y + j, color.r, color.g, color.b);
-                }
-            }
-        }
-    }
+//     // Implement DrawSquare
+//     void DrawSquare(Canvas *canvas, int x, int y, int size, const Color& color) {
+//         for (int i = x - size; i <= x + size; ++i) {
+//             for (int j = y - size; j <= y + size; ++j) {
+//                 canvas->SetPixel(i, j, color.r, color.g, color.b);
+//             }
+//         }
+//     }
 
-    // Implement DrawSquare
-    void DrawSquare(Canvas *canvas, int x, int y, int size, const Color& color) {
-        for (int i = x - size; i <= x + size; ++i) {
-            for (int j = y - size; j <= y + size; ++j) {
-                canvas->SetPixel(i, j, color.r, color.g, color.b);
-            }
-        }
-    }
+//     // Implement DrawTriangle
+//     void DrawTriangle(Canvas *canvas, int x, int y, int size, const Color& color) {
+//         for (int i = 0; i <= size; ++i) {
+//             for (int j = -i; j <= i; ++j) {
+//                 canvas->SetPixel(x + j, y - i, color.r, color.g, color.b);
+//             }
+//         }
+//     }
+// } // End of namespace MyApp
 
-    // Implement DrawTriangle
-    void DrawTriangle(Canvas *canvas, int x, int y, int size, const Color& color) {
-        for (int i = 0; i <= size; ++i) {
-            for (int j = -i; j <= i; ++j) {
-                canvas->SetPixel(x + j, y - i, color.r, color.g, color.b);
-            }
-        }
-    }
-} // End of namespace MyApp
+// // Define PortalGene and PortalChromosome
+// struct PortalGene {
+//     int color_r;
+//     int color_g;
+//     int color_b;
+//     int shape; // 0: circle, 1: square, 2: triangle
+// };
 
-// Define PortalGene and PortalChromosome
-struct PortalGene {
-    int color_r;
-    int color_g;
-    int color_b;
-    int shape; // 0: circle, 1: square, 2: triangle
-};
+// class PortalChromosome {
+// public:
+//     PortalChromosome() {
+//         genes.color_r = rand() % 256;
+//         genes.color_g = rand() % 256;
+//         genes.color_b = rand() % 256;
+//         genes.shape = rand() % 3;
+//     }
 
-class PortalChromosome {
-public:
-    PortalChromosome() {
-        genes.color_r = rand() % 256;
-        genes.color_g = rand() % 256;
-        genes.color_b = rand() % 256;
-        genes.shape = rand() % 3;
-    }
+//     PortalChromosome(const PortalGene& g) : genes(g) {}
 
-    PortalChromosome(const PortalGene& g) : genes(g) {}
+//     PortalGene genes;
+//     float fitness = 0.0f;
 
-    PortalGene genes;
-    float fitness = 0.0f;
+//     void mutate() {
+//         if (rand() % 100 < 10) { // 10% mutation rate
+//             genes.color_r = rand() % 256;
+//         }
+//         if (rand() % 100 < 10) {
+//             genes.color_g = rand() % 256;
+//         }
+//         if (rand() % 100 < 10) {
+//             genes.color_b = rand() % 256;
+//         }
+//         if (rand() % 100 < 10) {
+//             genes.shape = rand() % 3;
+//         }
+//     }
 
-    void mutate() {
-        if (rand() % 100 < 10) { // 10% mutation rate
-            genes.color_r = rand() % 256;
-        }
-        if (rand() % 100 < 10) {
-            genes.color_g = rand() % 256;
-        }
-        if (rand() % 100 < 10) {
-            genes.color_b = rand() % 256;
-        }
-        if (rand() % 100 < 10) {
-            genes.shape = rand() % 3;
-        }
-    }
+//     static PortalChromosome crossover(const PortalChromosome& a, const PortalChromosome& b) {
+//         PortalGene new_genes;
+//         new_genes.color_r = (rand() % 2) ? a.genes.color_r : b.genes.color_r;
+//         new_genes.color_g = (rand() % 2) ? a.genes.color_g : b.genes.color_g;
+//         new_genes.color_b = (rand() % 2) ? a.genes.color_b : b.genes.color_b;
+//         new_genes.shape = (rand() % 2) ? a.genes.shape : b.genes.shape;
+//         return PortalChromosome(new_genes);
+//     }
+// };
 
-    static PortalChromosome crossover(const PortalChromosome& a, const PortalChromosome& b) {
-        PortalGene new_genes;
-        new_genes.color_r = (rand() % 2) ? a.genes.color_r : b.genes.color_r;
-        new_genes.color_g = (rand() % 2) ? a.genes.color_g : b.genes.color_g;
-        new_genes.color_b = (rand() % 2) ? a.genes.color_b : b.genes.color_b;
-        new_genes.shape = (rand() % 2) ? a.genes.shape : b.genes.shape;
-        return PortalChromosome(new_genes);
-    }
-};
+// // Define the PortalPopulation class
+// class PortalPopulation {
+// public:
+//     PortalPopulation(int size) {
+//         for (int i = 0; i < size; ++i) {
+//             population.push_back(PortalChromosome());
+//         }
+//     }
 
-// Define the PortalPopulation class
-class PortalPopulation {
-public:
-    PortalPopulation(int size) {
-        for (int i = 0; i < size; ++i) {
-            population.push_back(PortalChromosome());
-        }
-    }
+//     void evolve() {
+//         calculateFitness();
+//         std::vector<PortalChromosome> new_population;
 
-    void evolve() {
-        calculateFitness();
-        std::vector<PortalChromosome> new_population;
+//         // Elitism: keep the best portal
+//         auto best = std::max_element(population.begin(), population.end(),
+//                                      [](const PortalChromosome& a, const PortalChromosome& b) {
+//                                          return a.fitness < b.fitness;
+//                                      });
+//         new_population.push_back(*best);
 
-        // Elitism: keep the best portal
-        auto best = std::max_element(population.begin(), population.end(),
-                                     [](const PortalChromosome& a, const PortalChromosome& b) {
-                                         return a.fitness < b.fitness;
-                                     });
-        new_population.push_back(*best);
+//         // Create the rest of the population through crossover and mutation
+//         while (new_population.size() < population.size()) {
+//             int a = rand() % population.size();
+//             int b = rand() % population.size();
+//             PortalChromosome child = PortalChromosome::crossover(population[a], population[b]);
+//             child.mutate();
+//             new_population.push_back(child);
+//         }
 
-        // Create the rest of the population through crossover and mutation
-        while (new_population.size() < population.size()) {
-            int a = rand() % population.size();
-            int b = rand() % population.size();
-            PortalChromosome child = PortalChromosome::crossover(population[a], population[b]);
-            child.mutate();
-            new_population.push_back(child);
-        }
+//         population = new_population;
+//     }
 
-        population = new_population;
-    }
+//     void calculateFitness() {
+//         for (auto& portal : population) {
+//             // Fitness based on how "bright" the portal is (sum of RGB)
+//             portal.fitness = (portal.genes.color_r + portal.genes.color_g + portal.genes.color_b) / 3.0f;
+//         }
+//     }
 
-    void calculateFitness() {
-        for (auto& portal : population) {
-            // Fitness based on how "bright" the portal is (sum of RGB)
-            portal.fitness = (portal.genes.color_r + portal.genes.color_g + portal.genes.color_b) / 3.0f;
-        }
-    }
+//     std::vector<PortalChromosome> population;
+// };
 
-    std::vector<PortalChromosome> population;
-};
+// // Define the PortalEffect class
+// class PortalEffect : public DemoRunner {
+// public:
+//     PortalEffect(Canvas *m, int delay_ms = 50, int num_portals = 5)
+//         : DemoRunner(m), delay_ms_(delay_ms), num_portals_(num_portals), population_(num_portals) {
+//         center_x_ = canvas()->width() / 2;
+//         center_y_ = canvas()->height() / 2;
+//         srand(time(0));
+//     }
 
-// Define the PortalEffect class
-class PortalEffect : public DemoRunner {
-public:
-    PortalEffect(Canvas *m, int delay_ms = 50, int num_portals = 5)
-        : DemoRunner(m), delay_ms_(delay_ms), num_portals_(num_portals), population_(num_portals) {
-        center_x_ = canvas()->width() / 2;
-        center_y_ = canvas()->height() / 2;
-        srand(time(0));
-    }
+//     void Run() override {
+//         std::vector<std::thread> threads;
+//         for (int i = 0; i < num_portals_; ++i) {
+//             threads.emplace_back(&PortalEffect::portalThread, this, i);
+//         }
 
-    void Run() override {
-        std::vector<std::thread> threads;
-        for (int i = 0; i < num_portals_; ++i) {
-            threads.emplace_back(&PortalEffect::portalThread, this, i);
-        }
+//         while (!interrupt_received) {
+//             usleep(delay_ms_ * 1000);
+//         }
 
-        while (!interrupt_received) {
-            usleep(delay_ms_ * 1000);
-        }
+//         for (auto& t : threads) {
+//             t.join();
+//         }
+//     }
 
-        for (auto& t : threads) {
-            t.join();
-        }
-    }
+// private:
+//     void portalThread(int portal_id) {
+//         while (!interrupt_received) {
+//             std::lock_guard<std::mutex> lock(mutex_);
+//             PortalChromosome& portal = population_.population[portal_id];
 
-private:
-    void portalThread(int portal_id) {
-        while (!interrupt_received) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            PortalChromosome& portal = population_.population[portal_id];
+//             // Render the portal
+//             canvas()->Clear();
+//             int radius = (t_ % 20) + 1;
+//             if (portal.genes.shape == 0) {
+//                 MyApp::DrawCircle(canvas(), center_x_, center_y_, radius,
+//                                   MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
+//             } else if (portal.genes.shape == 1) {
+//                 MyApp::DrawSquare(canvas(), center_x_, center_y_, radius,
+//                                   MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
+//             } else {
+//                 MyApp::DrawTriangle(canvas(), center_x_, center_y_, radius,
+//                                     MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
+//             }
+//             t_++;
 
-            // Render the portal
-            canvas()->Clear();
-            int radius = (t_ % 20) + 1;
-            if (portal.genes.shape == 0) {
-                MyApp::DrawCircle(canvas(), center_x_, center_y_, radius,
-                                  MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
-            } else if (portal.genes.shape == 1) {
-                MyApp::DrawSquare(canvas(), center_x_, center_y_, radius,
-                                  MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
-            } else {
-                MyApp::DrawTriangle(canvas(), center_x_, center_y_, radius,
-                                    MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
-            }
-            t_++;
+//             // Evolve the population
+//             population_.evolve();
 
-            // Evolve the population
-            population_.evolve();
+//             usleep(delay_ms_ * 1000);
+//         }
+//     }
 
-            usleep(delay_ms_ * 1000);
-        }
-    }
-
-    int delay_ms_;
-    int num_portals_;
-    int t_;
-    int center_x_;
-    int center_y_;
-    PortalPopulation population_;
-    std::mutex mutex_;
-};
-
-
-
+//     int delay_ms_;
+//     int num_portals_;
+//     int t_;
+//     int center_x_;
+//     int center_y_;
+//     PortalPopulation population_;
+//     std::mutex mutex_;
+// };
 /////////////////////////// end of testing
-
-
-class ImageScroller : public DemoRunner {
-public:
-  // Scroll image with "scroll_jumps" pixels every "scroll_ms" milliseconds.
-  // If "scroll_ms" is negative, don't do any scrolling.
-  ImageScroller(RGBMatrix *m, int scroll_jumps, int scroll_ms = 30)
-    : DemoRunner(m), scroll_jumps_(scroll_jumps),
-      scroll_ms_(scroll_ms),
-      horizontal_position_(0),
-      matrix_(m) {
-    offscreen_ = matrix_->CreateFrameCanvas();
-  }
-
-  // _very_ simplified. Can only read binary P6 PPM. Expects newlines in headers
-  // Not really robust. Use at your own risk :)
-  // This allows reload of an image while things are running, e.g. you can
-  // live-update the content.
-  bool LoadPPM(const char *filename) {
-    FILE *f = fopen(filename, "r");
-    // check if file exists
-    if (f == NULL && access(filename, F_OK) == -1) {
-      fprintf(stderr, "File \"%s\" doesn't exist\n", filename);
-      return false;
-    }
-    if (f == NULL) return false;
-    char header_buf[256];
-    const char *line = ReadLine(f, header_buf, sizeof(header_buf));
-#define EXIT_WITH_MSG(m) { fprintf(stderr, "%s: %s |%s", filename, m, line); \
-      fclose(f); return false; }
-    if (sscanf(line, "P6 ") == EOF)
-      EXIT_WITH_MSG("Can only handle P6 as PPM type.");
-    line = ReadLine(f, header_buf, sizeof(header_buf));
-    int new_width, new_height;
-    if (!line || sscanf(line, "%d %d ", &new_width, &new_height) != 2)
-      EXIT_WITH_MSG("Width/height expected");
-    int value;
-    line = ReadLine(f, header_buf, sizeof(header_buf));
-    if (!line || sscanf(line, "%d ", &value) != 1 || value != 255)
-      EXIT_WITH_MSG("Only 255 for maxval allowed.");
-    const size_t pixel_count = new_width * new_height;
-    Pixel *new_image = new Pixel [ pixel_count ];
-    assert(sizeof(Pixel) == 3);   // we make that assumption.
-    if (fread(new_image, sizeof(Pixel), pixel_count, f) != pixel_count) {
-      line = "";
-      EXIT_WITH_MSG("Not enough pixels read.");
-    }
-#undef EXIT_WITH_MSG
-    fclose(f);
-    fprintf(stderr, "Read image '%s' with %dx%d\n", filename,
-            new_width, new_height);
-    horizontal_position_ = 0;
-    MutexLock l(&mutex_new_image_);
-    new_image_.Delete();  // in case we reload faster than is picked up
-    new_image_.image = new_image;
-    new_image_.width = new_width;
-    new_image_.height = new_height;
-    return true;
-  }
-
-  void Run() override {
-    const int screen_height = offscreen_->height();
-    const int screen_width = offscreen_->width();
-    while (!interrupt_received) {
-      {
-        MutexLock l(&mutex_new_image_);
-        if (new_image_.IsValid()) {
-          current_image_.Delete();
-          current_image_ = new_image_;
-          new_image_.Reset();
-        }
-      }
-      if (!current_image_.IsValid()) {
-        usleep(100 * 1000);
-        continue;
-      }
-      for (int x = 0; x < screen_width; ++x) {
-        for (int y = 0; y < screen_height; ++y) {
-          const Pixel &p = current_image_.getPixel(
-            (horizontal_position_ + x) % current_image_.width, y);
-          offscreen_->SetPixel(x, y, p.red, p.green, p.blue);
-        }
-      }
-      offscreen_ = matrix_->SwapOnVSync(offscreen_);
-      horizontal_position_ += scroll_jumps_;
-      if (horizontal_position_ < 0) horizontal_position_ = current_image_.width;
-      if (scroll_ms_ <= 0) {
-        // No scrolling. We don't need the image anymore.
-        current_image_.Delete();
-      } else {
-        usleep(scroll_ms_ * 1000);
-      }
-    }
-  }
-
-private:
-  struct Pixel {
-    Pixel() : red(0), green(0), blue(0){}
-    uint8_t red;
-    uint8_t green;
-    uint8_t blue;
-  };
-
-  struct Image {
-    Image() : width(-1), height(-1), image(NULL) {}
-    ~Image() { Delete(); }
-    void Delete() { delete [] image; Reset(); }
-    void Reset() { image = NULL; width = -1; height = -1; }
-    inline bool IsValid() { return image && height > 0 && width > 0; }
-    const Pixel &getPixel(int x, int y) {
-      static Pixel black;
-      if (x < 0 || x >= width || y < 0 || y >= height) return black;
-      return image[x + width * y];
-    }
-
-    int width;
-    int height;
-    Pixel *image;
-  };
-
-  // Read line, skip comments.
-  char *ReadLine(FILE *f, char *buffer, size_t len) {
-    char *result;
-    do {
-      result = fgets(buffer, len, f);
-    } while (result != NULL && result[0] == '#');
-    return result;
-  }
-
-  const int scroll_jumps_;
-  const int scroll_ms_;
-
-  // Current image is only manipulated in our thread.
-  Image current_image_;
-
-  // New image can be loaded from another thread, then taken over in main thread
-  Mutex mutex_new_image_;
-  Image new_image_;
-
-  int32_t horizontal_position_;
-
-  RGBMatrix* matrix_;
-  FrameCanvas* offscreen_;
-};
-
-
-// Abelian sandpile
-// Contributed by: Vliedel
-class Sandpile : public DemoRunner {
-public:
-  Sandpile(Canvas *m, int delay_ms=50)
-    : DemoRunner(m), delay_ms_(delay_ms) {
-    width_ = canvas()->width() - 1; // We need an odd width
-    height_ = canvas()->height() - 1; // We need an odd height
-
-    // Allocate memory
-    values_ = new int*[width_];
-    for (int x=0; x<width_; ++x) {
-      values_[x] = new int[height_];
-    }
-    newValues_ = new int*[width_];
-    for (int x=0; x<width_; ++x) {
-      newValues_[x] = new int[height_];
-    }
-
-    // Init values
-    srand(time(NULL));
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        values_[x][y] = 0;
-      }
-    }
-  }
-
-  ~Sandpile() {
-    for (int x=0; x<width_; ++x) {
-      delete [] values_[x];
-    }
-    delete [] values_;
-    for (int x=0; x<width_; ++x) {
-      delete [] newValues_[x];
-    }
-    delete [] newValues_;
-  }
-
-  void Run() override {
-    while (!interrupt_received) {
-      // Drop a sand grain in the centre
-      values_[width_/2][height_/2]++;
-      updateValues();
-
-      for (int x=0; x<width_; ++x) {
-        for (int y=0; y<height_; ++y) {
-          switch (values_[x][y]) {
-          case 0:
-            canvas()->SetPixel(x, y, 0, 0, 0);
-            break;
-          case 1:
-            canvas()->SetPixel(x, y, 0, 0, 200);
-            break;
-          case 2:
-            canvas()->SetPixel(x, y, 0, 200, 0);
-            break;
-          case 3:
-            canvas()->SetPixel(x, y, 150, 100, 0);
-            break;
-          default:
-            canvas()->SetPixel(x, y, 200, 0, 0);
-          }
-        }
-      }
-      usleep(delay_ms_ * 1000); // ms
-    }
-  }
-
-private:
-  void updateValues() {
-    // Copy values to newValues
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        newValues_[x][y] = values_[x][y];
-      }
-    }
-
-    // Update newValues based on values
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        if (values_[x][y] > 3) {
-          // Collapse
-          if (x>0)
-            newValues_[x-1][y]++;
-          if (x<width_-1)
-            newValues_[x+1][y]++;
-          if (y>0)
-            newValues_[x][y-1]++;
-          if (y<height_-1)
-            newValues_[x][y+1]++;
-          newValues_[x][y] -= 4;
-        }
-      }
-    }
-    // Copy newValues to values
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        values_[x][y] = newValues_[x][y];
-      }
-    }
-  }
-
-  int width_;
-  int height_;
-  int** values_;
-  int** newValues_;
-  int delay_ms_;
-};
-
-
-// Conway's game of life
-// Contributed by: Vliedel
-class GameLife : public DemoRunner {
-public:
-  GameLife(Canvas *m, int delay_ms=500, bool torus=true)
-    : DemoRunner(m), delay_ms_(delay_ms), torus_(torus) {
-    width_ = canvas()->width();
-    height_ = canvas()->height();
-
-    // Allocate memory
-    values_ = new int*[width_];
-    for (int x=0; x<width_; ++x) {
-      values_[x] = new int[height_];
-    }
-    newValues_ = new int*[width_];
-    for (int x=0; x<width_; ++x) {
-      newValues_[x] = new int[height_];
-    }
-
-    // Init values randomly
-    srand(time(NULL));
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        values_[x][y]=rand()%2;
-      }
-    }
-    r_ = rand()%255;
-    g_ = rand()%255;
-    b_ = rand()%255;
-
-    if (r_<150 && g_<150 && b_<150) {
-      int c = rand()%3;
-      switch (c) {
-      case 0:
-        r_ = 200;
-        break;
-      case 1:
-        g_ = 200;
-        break;
-      case 2:
-        b_ = 200;
-        break;
-      }
-    }
-  }
-
-  ~GameLife() {
-    for (int x=0; x<width_; ++x) {
-      delete [] values_[x];
-    }
-    delete [] values_;
-    for (int x=0; x<width_; ++x) {
-      delete [] newValues_[x];
-    }
-    delete [] newValues_;
-  }
-
-  void Run() override {
-    while (!interrupt_received) {
-
-      updateValues();
-
-      for (int x=0; x<width_; ++x) {
-        for (int y=0; y<height_; ++y) {
-          if (values_[x][y])
-            canvas()->SetPixel(x, y, r_, g_, b_);
-          else
-            canvas()->SetPixel(x, y, 0, 0, 0);
-        }
-      }
-      usleep(delay_ms_ * 1000); // ms
-    }
-  }
-
-private:
-  int numAliveNeighbours(int x, int y) {
-    int num=0;
-    if (torus_) {
-      // Edges are connected (torus)
-      num += values_[(x-1+width_)%width_][(y-1+height_)%height_];
-      num += values_[(x-1+width_)%width_][y                    ];
-      num += values_[(x-1+width_)%width_][(y+1        )%height_];
-      num += values_[(x+1       )%width_][(y-1+height_)%height_];
-      num += values_[(x+1       )%width_][y                    ];
-      num += values_[(x+1       )%width_][(y+1        )%height_];
-      num += values_[x                  ][(y-1+height_)%height_];
-      num += values_[x                  ][(y+1        )%height_];
-    }
-    else {
-      // Edges are not connected (no torus)
-      if (x>0) {
-        if (y>0)
-          num += values_[x-1][y-1];
-        if (y<height_-1)
-          num += values_[x-1][y+1];
-        num += values_[x-1][y];
-      }
-      if (x<width_-1) {
-        if (y>0)
-          num += values_[x+1][y-1];
-        if (y<31)
-          num += values_[x+1][y+1];
-        num += values_[x+1][y];
-      }
-      if (y>0)
-        num += values_[x][y-1];
-      if (y<height_-1)
-        num += values_[x][y+1];
-    }
-    return num;
-  }
-
-  void updateValues() {
-    // Copy values to newValues
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        newValues_[x][y] = values_[x][y];
-      }
-    }
-    // update newValues based on values
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        int num = numAliveNeighbours(x,y);
-        if (values_[x][y]) {
-          // cell is alive
-          if (num < 2 || num > 3)
-            newValues_[x][y] = 0;
-        }
-        else {
-          // cell is dead
-          if (num == 3)
-            newValues_[x][y] = 1;
-        }
-      }
-    }
-    // copy newValues to values
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        values_[x][y] = newValues_[x][y];
-      }
-    }
-  }
-
-  int** values_;
-  int** newValues_;
-  int delay_ms_;
-  int r_;
-  int g_;
-  int b_;
-  int width_;
-  int height_;
-  bool torus_;
-};
-
-// Langton's ant
-// Contributed by: Vliedel
-class Ant : public DemoRunner {
-public:
-  Ant(Canvas *m, int delay_ms=500)
-    : DemoRunner(m), delay_ms_(delay_ms) {
-    numColors_ = 4;
-    width_ = canvas()->width();
-    height_ = canvas()->height();
-    values_ = new int*[width_];
-    for (int x=0; x<width_; ++x) {
-      values_[x] = new int[height_];
-    }
-  }
-
-  ~Ant() {
-    for (int x=0; x<width_; ++x) {
-      delete [] values_[x];
-    }
-    delete [] values_;
-  }
-
-  void Run() override {
-    antX_ = width_/2;
-    antY_ = height_/2-3;
-    antDir_ = 0;
-    for (int x=0; x<width_; ++x) {
-      for (int y=0; y<height_; ++y) {
-        values_[x][y] = 0;
-        updatePixel(x, y);
-      }
-    }
-
-    while (!interrupt_received) {
-      // LLRR
-      switch (values_[antX_][antY_]) {
-      case 0:
-      case 1:
-        antDir_ = (antDir_+1+4) % 4;
-        break;
-      case 2:
-      case 3:
-        antDir_ = (antDir_-1+4) % 4;
-        break;
-      }
-
-      values_[antX_][antY_] = (values_[antX_][antY_] + 1) % numColors_;
-      int oldX = antX_;
-      int oldY = antY_;
-      switch (antDir_) {
-      case 0:
-        antX_++;
-        break;
-      case 1:
-        antY_++;
-        break;
-      case 2:
-        antX_--;
-        break;
-      case 3:
-        antY_--;
-        break;
-      }
-      updatePixel(oldX, oldY);
-      if (antX_ < 0 || antX_ >= width_ || antY_ < 0 || antY_ >= height_)
-        return;
-      updatePixel(antX_, antY_);
-      usleep(delay_ms_ * 1000);
-    }
-  }
-
-private:
-  void updatePixel(int x, int y) {
-    switch (values_[x][y]) {
-    case 0:
-      canvas()->SetPixel(x, y, 200, 0, 0);
-      break;
-    case 1:
-      canvas()->SetPixel(x, y, 0, 200, 0);
-      break;
-    case 2:
-      canvas()->SetPixel(x, y, 0, 0, 200);
-      break;
-    case 3:
-      canvas()->SetPixel(x, y, 150, 100, 0);
-      break;
-    }
-    if (x == antX_ && y == antY_)
-      canvas()->SetPixel(x, y, 0, 0, 0);
-  }
-
-  int numColors_;
-  int** values_;
-  int antX_;
-  int antY_;
-  int antDir_; // 0 right, 1 up, 2 left, 3 down
-  int delay_ms_;
-  int width_;
-  int height_;
-};
-
-
-
-// Imitation of volume bars
-// Purely random height doesn't look realistic
-// Contributed by: Vliedel
-class VolumeBars : public DemoRunner {
-public:
-  VolumeBars(Canvas *m, int delay_ms=50, int numBars=8)
-    : DemoRunner(m), delay_ms_(delay_ms),
-      numBars_(numBars), t_(0) {
-  }
-
-  ~VolumeBars() {
-    delete [] barHeights_;
-    delete [] barFreqs_;
-    delete [] barMeans_;
-  }
-
-  void Run() override {
-    const int width = canvas()->width();
-    height_ = canvas()->height();
-    barWidth_ = width/numBars_;
-    barHeights_ = new int[numBars_];
-    barMeans_ = new int[numBars_];
-    barFreqs_ = new int[numBars_];
-    heightGreen_  = height_*4/12;
-    heightYellow_ = height_*8/12;
-    heightOrange_ = height_*10/12;
-    heightRed_    = height_*12/12;
-
-    // Array of possible bar means
-    int numMeans = 10;
-    int means[10] = {1,2,3,4,5,6,7,8,16,32};
-    for (int i=0; i<numMeans; ++i) {
-      means[i] = height_ - means[i]*height_/8;
-    }
-    // Initialize bar means randomly
-    srand(time(NULL));
-    for (int i=0; i<numBars_; ++i) {
-      barMeans_[i] = rand()%numMeans;
-      barFreqs_[i] = 1<<(rand()%3);
-    }
-
-    // Start the loop
-    while (!interrupt_received) {
-      if (t_ % 8 == 0) {
-        // Change the means
-        for (int i=0; i<numBars_; ++i) {
-          barMeans_[i] += rand()%3 - 1;
-          if (barMeans_[i] >= numMeans)
-            barMeans_[i] = numMeans-1;
-          if (barMeans_[i] < 0)
-            barMeans_[i] = 0;
-        }
-      }
-
-      // Update bar heights
-      t_++;
-      for (int i=0; i<numBars_; ++i) {
-        barHeights_[i] = (height_ - means[barMeans_[i]])
-          * sin(0.1*t_*barFreqs_[i]) + means[barMeans_[i]];
-        if (barHeights_[i] < height_/8)
-          barHeights_[i] = rand() % (height_/8) + 1;
-      }
-
-      for (int i=0; i<numBars_; ++i) {
-        int y;
-        for (y=0; y<barHeights_[i]; ++y) {
-          if (y<heightGreen_) {
-            drawBarRow(i, y, 0, 200, 0);
-          }
-          else if (y<heightYellow_) {
-            drawBarRow(i, y, 150, 150, 0);
-          }
-          else if (y<heightOrange_) {
-            drawBarRow(i, y, 250, 100, 0);
-          }
-          else {
-            drawBarRow(i, y, 200, 0, 0);
-          }
-        }
-        // Anything above the bar should be black
-        for (; y<height_; ++y) {
-          drawBarRow(i, y, 0, 0, 0);
-        }
-      }
-      usleep(delay_ms_ * 1000);
-    }
-  }
-
-private:
-  void drawBarRow(int bar, int y, uint8_t r, uint8_t g, uint8_t b) {
-    for (int x=bar*barWidth_; x<(bar+1)*barWidth_; ++x) {
-      canvas()->SetPixel(x, height_-1-y, r, g, b);
-    }
-  }
-
-  int delay_ms_;
-  int numBars_;
-  int* barHeights_;
-  int barWidth_;
-  int height_;
-  int heightGreen_;
-  int heightYellow_;
-  int heightOrange_;
-  int heightRed_;
-  int* barFreqs_;
-  int* barMeans_;
-  int t_;
-};
-
 
 // /// Genetic Colors
 // /// A genetic algorithm to evolve colors
@@ -1508,7 +755,20 @@ public:
 
   void Run() override {
     // Set a random target_
-    target_ = rand() & 0xFFFFFF;
+    //target_ = rand() & 0xFFFFFF;
+
+    // Show the target image directly on the matrix (for confirmation)
+    for (int i = 0; i < popSize_; ++i) {
+      int x = i % width_;
+      int y = i / width_;
+      uint32_t rgb = targetPixels[i];
+      canvas()->SetPixel(x, y,
+                        (rgb >> 16) & 0xFF,
+                        (rgb >> 8) & 0xFF,
+                        rgb & 0xFF);
+    }
+    usleep(2000000); // show for 2 seconds
+
 
     // Create the first generation of random children_
     for (int i = 0; i < popSize_; ++i) {
@@ -1532,14 +792,15 @@ public:
       // When we reach the 85% fitness threshold...
       if(is85PercentFit()) {
         // ...set a new random target_
-        target_ = rand() & 0xFFFFFF;
+       // target_ = rand() & 0xFFFFFF;
 
         // Randomly mutate everyone for sake of new colors
         for (int i = 0; i < popSize_; ++i) {
           mutate(children_[i]);
         }
       }
-      usleep(delay_ms_ * 1000);
+      //usleep(delay_ms_ * 1000);
+      usleep(50 * 1000);
     }
   }
 
@@ -1558,16 +819,19 @@ private:
   /// for sorting by fitness
   class comparer {
   public:
-    comparer(int t)
-      : target_(t) { }
+    comparer(citizen* parents) : parents_(parents) {}
 
     inline bool operator() (const citizen& c1, const citizen& c2) {
-      return (calcFitness(c1.dna, target_) < calcFitness(c2.dna, target_));
+      int i1 = &c1 - parents_;
+      int i2 = &c2 - parents_;
+      return (calcFitness(c1.dna, targetPixels[i1]) < calcFitness(c2.dna, targetPixels[i2]));
     }
 
   private:
-    const int target_;
+    citizen* parents_;  // Pointer to outer class's parents_ array
   };
+
+
 
   static int R(const int cit) { return at(cit, 16); }
   static int G(const int cit) { return at(cit, 8); }
@@ -1576,7 +840,6 @@ private:
 
   /// fitness here is how "similar" the color is to the target
   static int calcFitness(const int value, const int target) {
-    // Count the number of differing bits
     int diffBits = 0;
     for (unsigned int diff = value ^ target; diff; diff &= diff - 1) {
       ++diffBits;
@@ -1584,13 +847,33 @@ private:
     return diffBits;
   }
 
+
   /// sort by fitness so the most fit citizens are at the top of parents_
   /// this is to establish an elite population of greatest fitness
   /// the most fit members and some others are allowed to reproduce
   /// to the next generation
-  void sort() {
-    std::sort(parents_, parents_ + popSize_, comparer(target_));
+void sort() {
+  // Step 1: Create a vector of (index, citizen) pairs
+  std::vector<std::pair<int, citizen>> indexed;
+  indexed.reserve(popSize_);
+  for (int i = 0; i < popSize_; ++i) {
+    indexed.push_back({i, parents_[i]});
   }
+
+  // Step 2: Sort by fitness to corresponding target pixel
+  std::sort(indexed.begin(), indexed.end(),
+            [](const std::pair<int, citizen>& a, const std::pair<int, citizen>& b) {
+              return calcFitness(a.second.dna, targetPixels[a.first]) <
+                     calcFitness(b.second.dna, targetPixels[b.first]);
+            });
+
+  // Step 3: Copy sorted citizens back into parents_
+  for (int i = 0; i < popSize_; ++i) {
+    parents_[i] = indexed[i].second;
+  }
+}
+
+
 
   /// let the elites continue to the next generation children
   /// randomly select 2 parents of (near)elite fitness and determine
@@ -1642,7 +925,7 @@ private:
   bool is85PercentFit() {
     int numFit = 0;
     for (int i = 0; i < popSize_; ++i) {
-      if (calcFitness(children_[i].dna, target_) < 1) {
+      if (calcFitness(children_[i].dna, targetPixels[i]) < 1) {
         ++numFit;
       }
     }
@@ -1691,6 +974,7 @@ static int usage(const char *progname) {
 }
 
 int main(int argc, char *argv[]) {
+  Magick::InitializeMagick(*argv);  // ✅ Put this as the first line
   int demo = -1;
   int scroll_ms = 30;
 
@@ -1743,73 +1027,53 @@ int main(int argc, char *argv[]) {
 
   Canvas *canvas = matrix;
 
+  ImageVector images = LoadImageAndScaleImage(demo_parameter,
+                                            matrix->width(),
+                                              matrix->height());
+  if (images.empty()) {
+    fprintf(stderr, "Failed to load target image.\n");
+    return 1;
+  }
+
+  const Magick::Image &targetImage = images[0];
+  targetPixels.clear();  // Clear any existing data
+  for (size_t y = 0; y < targetImage.rows(); ++y) {
+    for (size_t x = 0; x < targetImage.columns(); ++x) {
+      const Magick::Color &c = targetImage.pixelColor(x, y);
+      uint32_t rgb = (ScaleQuantumToChar(c.redQuantum()) << 16) |
+                    (ScaleQuantumToChar(c.greenQuantum()) << 8) |
+                    ScaleQuantumToChar(c.blueQuantum());
+      targetPixels.push_back(rgb);
+    }
+  }
+
+  if (targetPixels.size() != matrix->width() * matrix->height()) {
+  fprintf(stderr, TERM_ERR "ERROR: targetPixels size (%lu) does not match matrix size (%d)\n" TERM_NORM,
+          targetPixels.size(), matrix->width() * matrix->height());
+  return 1;
+}
   // The DemoRunner objects are filling
   // the matrix continuously.
   DemoRunner *demo_runner = NULL;
   switch (demo) {
-  case 0:
-    demo_runner = new RotatingBlockGenerator(canvas);
-    break;
-
-  case 1:
-  case 2:
-    if (demo_parameter) {
-      ImageScroller *scroller = new ImageScroller(matrix,
-                                                  demo == 1 ? 1 : -1,
-                                                  scroll_ms);
-      if (!scroller->LoadPPM(demo_parameter))
-        return 1;
-      demo_runner = scroller;
-    } else {
-      fprintf(stderr, "Demo %d Requires PPM image as parameter\n", demo);
-      return 1;
-    }
-    break;
-
   case 3:
     demo_runner = new SimpleSquare(canvas);
-    break;
-
-  case 4:
-    demo_runner = new ColorPulseGenerator(matrix);
-    break;
-
-  case 5:
-    demo_runner = new GrayScaleBlock(canvas);
-    break;
-
-  case 6:
-    demo_runner = new Sandpile(canvas, scroll_ms);
-    break;
-
-  case 7:
-    demo_runner = new GameLife(canvas, scroll_ms);
-    break;
-
-  case 8:
-    demo_runner = new Ant(canvas, scroll_ms);
-    break;
-
-  case 9:
-    demo_runner = new VolumeBars(canvas, scroll_ms, canvas->width()/2);
     break;
 
   case 10:
     demo_runner = new GeneticColors(canvas, scroll_ms);
     break;
 
-  case 11:
-    demo_runner = new BrightnessPulseGenerator(matrix);
-    break;
-  
-  case 12:
-    demo_runner = new PortalEffect(canvas, 50, 5);
-    break;
-
   }
 
   if (demo_runner == NULL)
     return usage(argv[0]);
+
+  if (demo == 10 && demo_parameter == NULL) {
+  fprintf(stderr, TERM_ERR "Demo 10 requires a target image filename.\n" TERM_NORM);
+  return usage(argv[0]);
+}
+
 
   // Set up an interrupt handler to be able to stop animations while they go
   // on. Each demo tests for while (!interrupt_received) {},
