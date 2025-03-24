@@ -231,32 +231,240 @@ private:
   }
 };
 
-//new class catherine
+// //new class catherine
+// class PortalEffect : public DemoRunner {
+// public:
+//   PortalEffect(Canvas *m, int delay_ms = 50)
+//     : DemoRunner(m), delay_ms_(delay_ms), t_(0) {
+//     center_x_ = canvas()->width() / 2;
+//     center_y_ = canvas()->height() / 2;
+//   }
+
+//   void Run() override {
+//     while (!interrupt_received) {
+//       canvas()->Clear();
+//       int radius = (t_ % 20) + 1;
+//       DrawCircle(canvas(), center_x_, center_y_, radius,
+//                  Color((radius * 10) % 255, 100, 255 - (radius * 10) % 255));
+//       t_++;
+//       usleep(delay_ms_ * 1000);
+//     }
+//   }
+
+// private:
+//   int delay_ms_;
+//   int t_;
+//   int center_x_;
+//   int center_y_;
+// };
+
+
+
+//something new testing///////////////
+
+#include <cstdint> // For uint8_t
+#include <vector>
+#include <cstdlib>
+#include <ctime>
+#include <thread>
+#include <mutex>
+#include <algorithm>
+#include "led-matrix.h" // Include the RGB matrix library
+
+using namespace rgb_matrix;
+
+// Define a namespace for your custom code
+namespace MyApp {
+    // Define the Color struct
+    struct Color {
+        uint8_t r, g, b;
+        Color(uint8_t r, uint8_t g, uint8_t b) : r(r), g(g), b(b) {}
+    };
+
+    // Implement DrawCircle
+    void DrawCircle(Canvas *canvas, int x, int y, int radius, const Color& color) {
+        for (int i = -radius; i <= radius; ++i) {
+            for (int j = -radius; j <= radius; ++j) {
+                if (i * i + j * j <= radius * radius) {
+                    canvas->SetPixel(x + i, y + j, color.r, color.g, color.b);
+                }
+            }
+        }
+    }
+
+    // Implement DrawSquare
+    void DrawSquare(Canvas *canvas, int x, int y, int size, const Color& color) {
+        for (int i = x - size; i <= x + size; ++i) {
+            for (int j = y - size; j <= y + size; ++j) {
+                canvas->SetPixel(i, j, color.r, color.g, color.b);
+            }
+        }
+    }
+
+    // Implement DrawTriangle
+    void DrawTriangle(Canvas *canvas, int x, int y, int size, const Color& color) {
+        for (int i = 0; i <= size; ++i) {
+            for (int j = -i; j <= i; ++j) {
+                canvas->SetPixel(x + j, y - i, color.r, color.g, color.b);
+            }
+        }
+    }
+} // End of namespace MyApp
+
+// Define PortalGene and PortalChromosome
+struct PortalGene {
+    int color_r;
+    int color_g;
+    int color_b;
+    int shape; // 0: circle, 1: square, 2: triangle
+};
+
+class PortalChromosome {
+public:
+    PortalChromosome() {
+        genes.color_r = rand() % 256;
+        genes.color_g = rand() % 256;
+        genes.color_b = rand() % 256;
+        genes.shape = rand() % 3;
+    }
+
+    PortalChromosome(const PortalGene& g) : genes(g) {}
+
+    PortalGene genes;
+    float fitness = 0.0f;
+
+    void mutate() {
+        if (rand() % 100 < 10) { // 10% mutation rate
+            genes.color_r = rand() % 256;
+        }
+        if (rand() % 100 < 10) {
+            genes.color_g = rand() % 256;
+        }
+        if (rand() % 100 < 10) {
+            genes.color_b = rand() % 256;
+        }
+        if (rand() % 100 < 10) {
+            genes.shape = rand() % 3;
+        }
+    }
+
+    static PortalChromosome crossover(const PortalChromosome& a, const PortalChromosome& b) {
+        PortalGene new_genes;
+        new_genes.color_r = (rand() % 2) ? a.genes.color_r : b.genes.color_r;
+        new_genes.color_g = (rand() % 2) ? a.genes.color_g : b.genes.color_g;
+        new_genes.color_b = (rand() % 2) ? a.genes.color_b : b.genes.color_b;
+        new_genes.shape = (rand() % 2) ? a.genes.shape : b.genes.shape;
+        return PortalChromosome(new_genes);
+    }
+};
+
+// Define the PortalPopulation class
+class PortalPopulation {
+public:
+    PortalPopulation(int size) {
+        for (int i = 0; i < size; ++i) {
+            population.push_back(PortalChromosome());
+        }
+    }
+
+    void evolve() {
+        calculateFitness();
+        std::vector<PortalChromosome> new_population;
+
+        // Elitism: keep the best portal
+        auto best = std::max_element(population.begin(), population.end(),
+                                     [](const PortalChromosome& a, const PortalChromosome& b) {
+                                         return a.fitness < b.fitness;
+                                     });
+        new_population.push_back(*best);
+
+        // Create the rest of the population through crossover and mutation
+        while (new_population.size() < population.size()) {
+            int a = rand() % population.size();
+            int b = rand() % population.size();
+            PortalChromosome child = PortalChromosome::crossover(population[a], population[b]);
+            child.mutate();
+            new_population.push_back(child);
+        }
+
+        population = new_population;
+    }
+
+    void calculateFitness() {
+        for (auto& portal : population) {
+            // Fitness based on how "bright" the portal is (sum of RGB)
+            portal.fitness = (portal.genes.color_r + portal.genes.color_g + portal.genes.color_b) / 3.0f;
+        }
+    }
+
+    std::vector<PortalChromosome> population;
+};
+
+// Define the PortalEffect class
 class PortalEffect : public DemoRunner {
 public:
-  PortalEffect(Canvas *m, int delay_ms = 50)
-    : DemoRunner(m), delay_ms_(delay_ms), t_(0) {
-    center_x_ = canvas()->width() / 2;
-    center_y_ = canvas()->height() / 2;
-  }
-
-  void Run() override {
-    while (!interrupt_received) {
-      canvas()->Clear();
-      int radius = (t_ % 20) + 1;
-      DrawCircle(canvas(), center_x_, center_y_, radius,
-                 Color((radius * 10) % 255, 100, 255 - (radius * 10) % 255));
-      t_++;
-      usleep(delay_ms_ * 1000);
+    PortalEffect(Canvas *m, int delay_ms = 50, int num_portals = 5)
+        : DemoRunner(m), delay_ms_(delay_ms), num_portals_(num_portals), population_(num_portals) {
+        center_x_ = canvas()->width() / 2;
+        center_y_ = canvas()->height() / 2;
+        srand(time(0));
     }
-  }
+
+    void Run() override {
+        std::vector<std::thread> threads;
+        for (int i = 0; i < num_portals_; ++i) {
+            threads.emplace_back(&PortalEffect::portalThread, this, i);
+        }
+
+        while (!interrupt_received) {
+            usleep(delay_ms_ * 1000);
+        }
+
+        for (auto& t : threads) {
+            t.join();
+        }
+    }
 
 private:
-  int delay_ms_;
-  int t_;
-  int center_x_;
-  int center_y_;
+    void portalThread(int portal_id) {
+        while (!interrupt_received) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            PortalChromosome& portal = population_.population[portal_id];
+
+            // Render the portal
+            canvas()->Clear();
+            int radius = (t_ % 20) + 1;
+            if (portal.genes.shape == 0) {
+                MyApp::DrawCircle(canvas(), center_x_, center_y_, radius,
+                                  MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
+            } else if (portal.genes.shape == 1) {
+                MyApp::DrawSquare(canvas(), center_x_, center_y_, radius,
+                                  MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
+            } else {
+                MyApp::DrawTriangle(canvas(), center_x_, center_y_, radius,
+                                    MyApp::Color(portal.genes.color_r, portal.genes.color_g, portal.genes.color_b));
+            }
+            t_++;
+
+            // Evolve the population
+            population_.evolve();
+
+            usleep(delay_ms_ * 1000);
+        }
+    }
+
+    int delay_ms_;
+    int num_portals_;
+    int t_;
+    int center_x_;
+    int center_y_;
+    PortalPopulation population_;
+    std::mutex mutex_;
 };
+
+
+
+/////////////////////////// end of testing
 
 
 class ImageScroller : public DemoRunner {
@@ -1078,17 +1286,211 @@ private:
 //   citizen* children_;
 //   citizen* parents_;
 // };
-/////
+//////////////
+
+// #include <algorithm>
+// #include <cstdlib>
+// #include <ctime>
+// #include <unistd.h>
+// #include <vector>
+
+// class GeneticColors : public DemoRunner {
+// public:
+//   GeneticColors(Canvas *m, int delay_ms = 200)
+//     : DemoRunner(m), delay_ms_(delay_ms) {
+//     width_ = canvas()->width();
+//     height_ = canvas()->height();
+//     popSize_ = width_ * height_;
+
+//     // Allocate memory
+//     children_ = new citizen[popSize_];
+//     parents_ = new citizen[popSize_];
+//     srand(time(NULL));
+
+//     // Initialize only the corner with random colors
+//     initializeCorner();
+//   }
+
+//   ~GeneticColors() {
+//     delete [] children_;
+//     delete [] parents_;
+//   }
+
+//   void Run() override {
+//     // Set a random target_
+//     target_ = rand() & 0xFFFFFF;
+
+//     while (!interrupt_received) {
+//       // Spread colors to neighboring pixels
+//       spreadColors();
+
+//       // Evolve the active pixels
+//       evolveActivePixels();
+
+//       // Draw the current state to the canvas
+//       drawCanvas();
+
+//       // Check if we need to set a new target
+//       if (is85PercentFit()) {
+//         target_ = rand() & 0xFFFFFF; // Set a new random target
+//       }
+
+//       usleep(delay_ms_ * 1000); // Delay between generations
+//     }
+//   }
+
+// private:
+//   struct citizen {
+//     int dna; // 24-bit color value
+//   };
+
+//   static int R(int color) { return (color >> 16) & 0xFF; }
+//   static int G(int color) { return (color >> 8) & 0xFF; }
+//   static int B(int color) { return color & 0xFF; }
+
+//   /// Initialize only the corner with random colors
+//   void initializeCorner() {
+//     // Clear the entire canvas (set all pixels to black/off)
+//     for (int i = 0; i < popSize_; ++i) {
+//       children_[i].dna = 0x000000; // Black
+//     }
+
+//     // Initialize the bottom-left corner (e.g., 4x4 pixels) with random colors
+//     int cornerSize = 4; // Adjust this for the size of the initial corner
+//     for (int y = 0; y < cornerSize; ++y) {
+//       for (int x = 0; x < cornerSize; ++x) {
+//         int index = y * width_ + x;
+//         children_[index].dna = rand() & 0xFFFFFF; // Random color
+//         activePixels_.push_back(index); // Mark these pixels as active
+//       }
+//     }
+//   }
+
+//   /// Spread colors to neighboring pixels
+//   void spreadColors() {
+//     std::vector<int> newActivePixels;
+
+//     for (int index : activePixels_) {
+//       int x = index % width_;
+//       int y = index / width_;
+
+//       // Check all 4 neighbors (up, down, left, right)
+//       int neighbors[4][2] = {{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}};
+
+//       for (int i = 0; i < 4; ++i) {
+//         int nx = neighbors[i][0];
+//         int ny = neighbors[i][1];
+
+//         if (nx >= 0 && nx < width_ && ny >= 0 && ny < height_) {
+//           int neighborIndex = ny * width_ + nx;
+
+//           // If the neighbor is inactive, activate it and copy the color
+//           if (children_[neighborIndex].dna == 0x000000) {
+//             children_[neighborIndex].dna = children_[index].dna;
+//             newActivePixels.push_back(neighborIndex);
+//           }
+//         }
+//       }
+//     }
+
+//     // Update the list of active pixels
+//     activePixels_.insert(activePixels_.end(), newActivePixels.begin(), newActivePixels.end());
+//   }
+
+//   /// Evolve the active pixels using a genetic algorithm
+//   void evolveActivePixels() {
+//     for (int index : activePixels_) {
+//       // Mutate the pixel's color to move closer to the target
+//       if (rand() / (float)RAND_MAX < mutationRate_) {
+//         guidedMutate(children_[index]);
+//       }
+//     }
+//   }
+
+//   /// Guided mutation: Move the color closer to the target
+//   void guidedMutate(citizen& c) {
+//     int currentR = R(c.dna);
+//     int currentG = G(c.dna);
+//     int currentB = B(c.dna);
+
+//     int targetR = R(target_);
+//     int targetG = G(target_);
+//     int targetB = B(target_);
+
+//     // Adjust one of the RGB components to move closer to the target
+//     int component = rand() % 3; // Choose R, G, or B
+//     if (component == 0) {
+//       currentR = (currentR < targetR) ? currentR + 1 : currentR - 1;
+//     } else if (component == 1) {
+//       currentG = (currentG < targetG) ? currentG + 1 : currentG - 1;
+//     } else {
+//       currentB = (currentB < targetB) ? currentB + 1 : currentB - 1;
+//     }
+
+//     // Clamp the values to 0-255
+//     currentR = std::max(0, std::min(255, currentR));
+//     currentG = std::max(0, std::min(255, currentG));
+//     currentB = std::max(0, std::min(255, currentB));
+
+//     // Update the color
+//     c.dna = (currentR << 16) | (currentG << 8) | currentB;
+//   }
+
+//   /// Check if 85% of the active pixels are close to the target
+//   bool is85PercentFit() {
+//     int numFit = 0;
+//     for (int index : activePixels_) {
+//       if (calcFitness(children_[index].dna, target_) <= fitnessThreshold_) {
+//         ++numFit;
+//       }
+//     }
+//     return ((numFit / (float)activePixels_.size()) > 0.85f);
+//   }
+
+//   /// Calculate fitness (number of differing bits)
+//   static int calcFitness(const int value, const int target) {
+//     int diffBits = 0;
+//     for (unsigned int diff = value ^ target; diff; diff &= diff - 1) {
+//       ++diffBits;
+//     }
+//     return diffBits;
+//   }
+
+//   /// Draw the current state to the canvas
+//   void drawCanvas() {
+//     for (int i = 0; i < popSize_; ++i) {
+//       int c = children_[i].dna;
+//       int x = i % width_;
+//       int y = i / width_;
+//       canvas()->SetPixel(x, y, R(c), G(c), B(c));
+//     }
+//   }
+
+//   // Parameters
+//   static const int bitsPerPixel = 24;
+//   const float mutationRate_ = 0.20f; // Mutation rate
+//   const int fitnessThreshold_ = 5; // Consider a pixel a match if it has <= 5 differing bits
+//   int popSize_;
+//   int width_, height_;
+//   int delay_ms_;
+//   int target_;
+//   citizen* children_;
+//   citizen* parents_;
+//   std::vector<int> activePixels_; // Tracks which pixels are active (non-black)
+// };
+
+/// end evolutiuon 
 
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <unistd.h>
 #include <vector>
+#include <queue>
 
-class GeneticColors : public DemoRunner {
+class ColorEvolution : public DemoRunner {
 public:
-  GeneticColors(Canvas *m, int delay_ms = 200)
+  ColorEvolution(Canvas *m, int delay_ms = 200)
     : DemoRunner(m), delay_ms_(delay_ms) {
     width_ = canvas()->width();
     height_ = canvas()->height();
@@ -1099,148 +1501,88 @@ public:
     parents_ = new citizen[popSize_];
     srand(time(NULL));
 
-    // Initialize only the corner with random colors
-    initializeCorner();
+    // Initialize the chain reaction starting point
+    startX_ = 0; // Start from the top-left corner
+    startY_ = 0;
+    activePixels_.push(startX_ + startY_ * width_);
+
+    // Initialize all pixels with random DNA
+    for (int i = 0; i < popSize_; ++i) {
+      children_[i].dna = rand() & 0xFFFFFF;
+    }
   }
 
-  ~GeneticColors() {
+  ~ColorEvolution() {
     delete [] children_;
     delete [] parents_;
   }
+
+  static int rnd (int i) { return rand() % i; }
 
   void Run() override {
     // Set a random target_
     target_ = rand() & 0xFFFFFF;
 
     while (!interrupt_received) {
-      // Spread colors to neighboring pixels
-      spreadColors();
+      // Evolve the active pixels and spread the chain reaction
+      evolveAndSpread();
 
-      // Evolve the active pixels
-      evolveActivePixels();
-
-      // Draw the current state to the canvas
-      drawCanvas();
-
-      // Check if we need to set a new target
-      if (is85PercentFit()) {
-        target_ = rand() & 0xFFFFFF; // Set a new random target
+      // Draw citizens to canvas
+      for(int i = 0; i < popSize_; i++) {
+        int c = children_[i].dna;
+        int x = i % width_;
+        int y = (int)(i / width_);
+        canvas()->SetPixel(x, y, R(c), G(c), B(c));
       }
 
-      usleep(delay_ms_ * 1000); // Delay between generations
+      // When we reach the 85% fitness threshold...
+      if(is85PercentFit()) {
+        // ...set a new random target_
+        target_ = rand() & 0xFFFFFF;
+
+        // Randomly mutate everyone for new colors
+        for (int i = 0; i < popSize_; ++i) {
+          mutate(children_[i]);
+        }
+      }
+      usleep(delay_ms_ * 1000);
     }
   }
 
 private:
+  /// citizen will hold dna information, a 24-bit color value.
   struct citizen {
-    int dna; // 24-bit color value
+    citizen() { }
+
+    citizen(int chrom)
+      : dna(chrom) {
+    }
+
+    int dna;
   };
 
-  static int R(int color) { return (color >> 16) & 0xFF; }
-  static int G(int color) { return (color >> 8) & 0xFF; }
-  static int B(int color) { return color & 0xFF; }
+  /// for sorting by fitness
+  class comparer {
+  public:
+    comparer(int t)
+      : target_(t) { }
 
-  /// Initialize only the corner with random colors
-  void initializeCorner() {
-    // Clear the entire canvas (set all pixels to black/off)
-    for (int i = 0; i < popSize_; ++i) {
-      children_[i].dna = 0x000000; // Black
+    inline bool operator() (const citizen& c1, const citizen& c2) {
+      return (calcFitness(c1.dna, target_) < calcFitness(c2.dna, target_));
     }
 
-    // Initialize the bottom-left corner (e.g., 4x4 pixels) with random colors
-    int cornerSize = 4; // Adjust this for the size of the initial corner
-    for (int y = 0; y < cornerSize; ++y) {
-      for (int x = 0; x < cornerSize; ++x) {
-        int index = y * width_ + x;
-        children_[index].dna = rand() & 0xFFFFFF; // Random color
-        activePixels_.push_back(index); // Mark these pixels as active
-      }
-    }
-  }
+  private:
+    const int target_;
+  };
 
-  /// Spread colors to neighboring pixels
-  void spreadColors() {
-    std::vector<int> newActivePixels;
+  static int R(const int cit) { return at(cit, 16); }
+  static int G(const int cit) { return at(cit, 8); }
+  static int B(const int cit) { return at(cit, 0); }
+  static int at(const int v, const  int offset) { return (v >> offset) & 0xFF; }
 
-    for (int index : activePixels_) {
-      int x = index % width_;
-      int y = index / width_;
-
-      // Check all 4 neighbors (up, down, left, right)
-      int neighbors[4][2] = {{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}};
-
-      for (int i = 0; i < 4; ++i) {
-        int nx = neighbors[i][0];
-        int ny = neighbors[i][1];
-
-        if (nx >= 0 && nx < width_ && ny >= 0 && ny < height_) {
-          int neighborIndex = ny * width_ + nx;
-
-          // If the neighbor is inactive, activate it and copy the color
-          if (children_[neighborIndex].dna == 0x000000) {
-            children_[neighborIndex].dna = children_[index].dna;
-            newActivePixels.push_back(neighborIndex);
-          }
-        }
-      }
-    }
-
-    // Update the list of active pixels
-    activePixels_.insert(activePixels_.end(), newActivePixels.begin(), newActivePixels.end());
-  }
-
-  /// Evolve the active pixels using a genetic algorithm
-  void evolveActivePixels() {
-    for (int index : activePixels_) {
-      // Mutate the pixel's color to move closer to the target
-      if (rand() / (float)RAND_MAX < mutationRate_) {
-        guidedMutate(children_[index]);
-      }
-    }
-  }
-
-  /// Guided mutation: Move the color closer to the target
-  void guidedMutate(citizen& c) {
-    int currentR = R(c.dna);
-    int currentG = G(c.dna);
-    int currentB = B(c.dna);
-
-    int targetR = R(target_);
-    int targetG = G(target_);
-    int targetB = B(target_);
-
-    // Adjust one of the RGB components to move closer to the target
-    int component = rand() % 3; // Choose R, G, or B
-    if (component == 0) {
-      currentR = (currentR < targetR) ? currentR + 1 : currentR - 1;
-    } else if (component == 1) {
-      currentG = (currentG < targetG) ? currentG + 1 : currentG - 1;
-    } else {
-      currentB = (currentB < targetB) ? currentB + 1 : currentB - 1;
-    }
-
-    // Clamp the values to 0-255
-    currentR = std::max(0, std::min(255, currentR));
-    currentG = std::max(0, std::min(255, currentG));
-    currentB = std::max(0, std::min(255, currentB));
-
-    // Update the color
-    c.dna = (currentR << 16) | (currentG << 8) | currentB;
-  }
-
-  /// Check if 85% of the active pixels are close to the target
-  bool is85PercentFit() {
-    int numFit = 0;
-    for (int index : activePixels_) {
-      if (calcFitness(children_[index].dna, target_) <= fitnessThreshold_) {
-        ++numFit;
-      }
-    }
-    return ((numFit / (float)activePixels_.size()) > 0.85f);
-  }
-
-  /// Calculate fitness (number of differing bits)
+  /// fitness here is how "similar" the color is to the target
   static int calcFitness(const int value, const int target) {
+    // Count the number of differing bits
     int diffBits = 0;
     for (unsigned int diff = value ^ target; diff; diff &= diff - 1) {
       ++diffBits;
@@ -1248,30 +1590,136 @@ private:
     return diffBits;
   }
 
-  /// Draw the current state to the canvas
-  void drawCanvas() {
+  /// mutate a citizen's DNA
+  void mutate(citizen& c) {
+    // Flip a random bit
+    c.dna ^= 1 << (rand() % bitsPerPixel);
+  }
+
+  /// check if 85% of the population is fit
+  bool is85PercentFit() {
+    int numFit = 0;
     for (int i = 0; i < popSize_; ++i) {
-      int c = children_[i].dna;
-      int x = i % width_;
-      int y = i / width_;
-      canvas()->SetPixel(x, y, R(c), G(c), B(c));
+      if (calcFitness(children_[i].dna, target_) < 1) {
+        ++numFit;
+      }
+    }
+    return ((numFit / (float)popSize_) > 0.85f);
+  }
+
+  /// Evolve and spread the chain reaction
+  void evolveAndSpread() {
+    std::queue<int> nextPixels;
+    while (!activePixels_.empty()) {
+      int pixel = activePixels_.front();
+      activePixels_.pop();
+
+      int x = pixel % width_;
+      int y = pixel / width_;
+
+      // Evolve the current pixel's DNA
+      evolvePixel(pixel);
+
+      // Spread to neighboring pixels
+      for (int dx = -1; dx <= 1; ++dx) {
+        for (int dy = -1; dy <= 1; ++dy) {
+          if (dx == 0 && dy == 0) continue; // Skip the current pixel
+
+          int nx = x + dx;
+          int ny = y + dy;
+          if (nx >= 0 && nx < width_ && ny >= 0 && ny < height_) {
+            int neighborPixel = nx + ny * width_;
+            if (std::find(visitedPixels_.begin(), visitedPixels_.end(), neighborPixel) == visitedPixels_.end()) {
+              visitedPixels_.push_back(neighborPixel);
+              nextPixels.push(neighborPixel);
+
+              // Inherit DNA from the parent pixel with some mutation
+              children_[neighborPixel].dna = children_[pixel].dna;
+              mutate(children_[neighborPixel]);
+            }
+          }
+        }
+      }
+    }
+
+    // Add the next generation of pixels to the active queue
+    activePixels_ = nextPixels;
+  }
+
+  /// Evolve a pixel's DNA based on fitness
+  void evolvePixel(int pixel) {
+    const float mutationRate = 0.1f;
+    if ((rand() / (float)RAND_MAX) < mutationRate) {
+      mutate(children_[pixel]);
     }
   }
 
-  // Parameters
-  static const int bitsPerPixel = 24;
-  const float mutationRate_ = 0.20f; // Mutation rate
-  const int fitnessThreshold_ = 5; // Consider a pixel a match if it has <= 5 differing bits
-  int popSize_;
   int width_, height_;
+  int popSize_;
   int delay_ms_;
   int target_;
+  int startX_, startY_;
   citizen* children_;
   citizen* parents_;
-  std::vector<int> activePixels_; // Tracks which pixels are active (non-black)
+  std::queue<int> activePixels_;
+  std::vector<int> visitedPixels_;
+  static const int bitsPerPixel = 24;
 };
 
-/// end evolutiuon 
+
+
+using namespace rgb_cube; // Replace with your cube library namespace
+
+// Define a Color struct for easy RGB color management
+struct Color {
+    uint8_t r, g, b;
+    Color(uint8_t r, uint8_t g, uint8_t b) : r(r), g(g), b(b) {}
+};
+
+// Function to generate a random color
+Color randomColor() {
+    return Color(rand() % 256, rand() % 256, rand() % 256);
+}
+
+// Spiral effect function
+void spiralEffect(Cube *cube, int delay_ms = 100) {
+    srand(time(0)); // Seed the random number generator
+    int size = cube->getSize(); // Get the size of the cube (assuming it's cubic)
+    int maxLayers = size / 2;   // Number of layers in the spiral
+
+    while (true) {
+        // Generate a new random color for the spiral
+        Color color = randomColor();
+
+        // Draw the spiral
+        for (int layer = 0; layer < maxLayers; ++layer) {
+            for (int i = layer; i < size - layer; ++i) {
+                cube->setVoxel(i, layer, layer, color.r, color.g, color.b); // Top face
+                cube->setVoxel(layer, i, layer, color.r, color.g, color.b); // Left face
+                cube->setVoxel(size - 1 - layer, i, layer, color.r, color.g, color.b); // Right face
+                cube->setVoxel(i, size - 1 - layer, layer, color.r, color.g, color.b); // Bottom face
+            }
+            cube->render(); // Update the cube display
+            usleep(delay_ms * 1000); // Delay for the animation effect
+            cube->clear(); // Clear the cube for the next frame
+        }
+
+        // Reverse the spiral
+        for (int layer = maxLayers - 1; layer >= 0; --layer) {
+            for (int i = size - 1 - layer; i >= layer; --i) {
+                cube->setVoxel(i, size - 1 - layer, layer, color.r, color.g, color.b); // Bottom face
+                cube->setVoxel(size - 1 - layer, i, layer, color.r, color.g, color.b); // Right face
+                cube->setVoxel(layer, i, layer, color.r, color.g, color.b); // Left face
+                cube->setVoxel(i, layer, layer, color.r, color.g, color.b); // Top face
+            }
+            cube->render(); // Update the cube display
+            usleep(delay_ms * 1000); // Delay for the animation effect
+            cube->clear(); // Clear the cube for the next frame
+        }
+    }
+}
+
+
 
 static int usage(const char *progname) {
   fprintf(stderr, "usage: %s <options> -D <demo-nr> [optional parameter]\n",
@@ -1409,7 +1857,7 @@ int main(int argc, char *argv[]) {
     break;
 
   case 10:
-    demo_runner = new GeneticColors(canvas, scroll_ms);
+    demo_runner = new ColorEvolution(canvas, scroll_ms);
     break;
 
   case 11:
@@ -1417,7 +1865,11 @@ int main(int argc, char *argv[]) {
     break;
   
   case 12:
-    demo_runner = new PortalEffect(canvas);
+    demo_runner = new PortalEffect(canvas, 50, 5);
+    break;
+
+  case 13:
+    demo_runner = new spiralEffect(cube);
     break;
   }
 
