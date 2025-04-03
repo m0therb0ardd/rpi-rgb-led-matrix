@@ -17,6 +17,8 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <iostream>
+
 
 
 //type alias and namespace for rgb_matrix
@@ -58,12 +60,13 @@ ImageVector LoadImageAndScaleImage(const char *filename,
   try {
     readImages(&frames, filename);
   } catch (std::exception &e) {
-    fprintf(stderr, "Error loading image: %s\n", e.what());
+    std::cerr << "Error loading image: " << e.what() << std::endl;
+
     return result;
   }
 
   if (frames.empty()) {
-    fprintf(stderr, "No image found in %s.\n", filename);
+    std::cerr << "No image found in " << filename << "." << std::endl;
     return result;
   }
 
@@ -287,60 +290,49 @@ private:
 
 //instructions for if a user runs program incorrectly 
 static int usage(const char *progname) {
-  fprintf(stderr, "usage: %s <options> -D <demo-nr> [optional parameter]\n",
-          progname);
-  fprintf(stderr, "Options:\n");
-  fprintf(stderr,
-          "\t-D <demo-nr>              : Always needs to be set\n"
-          );
+  std::cerr << "usage: " << progname << " <options> -D <demo-nr> [optional parameter]\n";
+  std::cerr << "Options:\n";
+  std::cerr << "\t-D <demo-nr>              : Always needs to be set\n";
 
+  rgb_matrix::PrintMatrixFlags(stderr);  // This still uses FILE*, leave as-is unless library supports streams
 
-  rgb_matrix::PrintMatrixFlags(stderr);
+  std::cerr << "Demos, chosen with -D\n"
+            << "\t0  - some rotating square\n"
+            << "\t10 - Guided mutation towards input image (-m <time-step-ms>)\n"
+            << "\t11 - Pure evolution towards input image\n"
+            << "\t12 - Portal animation by Catherine\n";
 
-  fprintf(stderr, "Demos, choosen with -D\n");
-  fprintf(stderr, "\t0  - some rotating square\n"
-          "\t10 - Guided mutation towards input image(-m <time-step-ms>)\n"
-          "\t11 - Pure evolution towards input image \n" 
-          "\t12 - Portal animation by Catherine\n");
+  std::cerr << "Example:\n\t" << progname << " -D 1 runtext.ppm\n"
+            << "Scrolls the runtext until Ctrl-C is pressed\n";
 
-  fprintf(stderr, "Example:\n\t%s -D 1 runtext.ppm\n"
-          "Scrolls the runtext until Ctrl-C is pressed\n", progname);
   return 1;
 }
 
 int main(int argc, char *argv[]) {
-  Magick::InitializeMagick(*argv);  // init graphics magick library 
+  Magick::InitializeMagick(*argv);  // Initialize GraphicsMagick
+
   int scroll_ms = 30;
   int demo = -1;
-
-
   const char *demo_parameter = NULL;
+
   RGBMatrix::Options matrix_options;
   rgb_matrix::RuntimeOptions runtime_opt;
-
-  // These are the defaults when no command-line flags are given.
   matrix_options.rows = 32;
   matrix_options.chain_length = 1;
   matrix_options.parallel = 1;
 
-  // extract the command line flags that contain relevant matrix options.
+  // Parse matrix options
   if (!ParseOptionsFromFlags(&argc, &argv, &matrix_options, &runtime_opt)) {
     return usage(argv[0]);
   }
-  // loops through command line flags 
+
+  // Parse command-line options
   int opt;
   while ((opt = getopt(argc, argv, "dD:r:P:c:p:b:m:LR:")) != -1) {
     switch (opt) {
-    case 'D':
-      demo = atoi(optarg);
-      break;
-
-    case 'm':
-      scroll_ms = atoi(optarg);
-      break;
-
-    default: /* '?' */
-      return usage(argv[0]);
+      case 'D': demo = atoi(optarg); break;
+      case 'm': scroll_ms = atoi(optarg); break;
+      default: return usage(argv[0]);
     }
   }
 
@@ -349,81 +341,77 @@ int main(int argc, char *argv[]) {
   }
 
   if (demo < 0) {
-    fprintf(stderr, TERM_ERR "Expected required option -D <demo>\n" TERM_NORM);
+    std::cerr << TERM_ERR << "Expected required option -D <demo>\n" << TERM_NORM;
+
     return usage(argv[0]);
   }
 
-  //matrix set up --> creates the matrix based on command line config 
-  RGBMatrix *matrix = RGBMatrix::CreateFromOptions(matrix_options, runtime_opt);
-  if (matrix == NULL)
-    return 1;
+  // Create LED matrix
+  auto matrix = std::unique_ptr<RGBMatrix>(
+      RGBMatrix::CreateFromOptions(matrix_options, runtime_opt));
 
-  printf("Size: %dx%d. Hardware gpio mapping: %s\n",
-         matrix->width(), matrix->height(), matrix_options.hardware_mapping);
-
-  //loads and prepares image to fit matrix size
-  Canvas *canvas = matrix;
-
-  ImageVector images = LoadImageAndScaleImage(demo_parameter,
-                                            matrix->width(),
-                                              matrix->height());
-  if (images.empty()) {
-    fprintf(stderr, "Failed to load target image.\n");
+  if (!matrix) {
+    std::cerr << TERM_ERR << "Failed to initialize matrix.\n" << TERM_NORM;
     return 1;
   }
 
+  Canvas *canvas = matrix.get();
+
+  // Load and scale the image (first frame for now, but supports GIF later)
+  ImageVector images = LoadImageAndScaleImage(
+      demo_parameter, matrix->width(), matrix->height());
+
+  if (images.empty()) {
+    std::cerr << TERM_ERR << "Failed to load target image.\n" << TERM_NORM;
+    return 1;
+  }
+
+  // Convert first image to targetPixels
   const Magick::Image &targetImage = images[0];
-  targetPixels.clear();  // Clear any existing data
+  targetPixels.clear();
   for (size_t y = 0; y < targetImage.rows(); ++y) {
     for (size_t x = 0; x < targetImage.columns(); ++x) {
       const Magick::Color &c = targetImage.pixelColor(x, y);
       uint32_t rgb = (ScaleQuantumToChar(c.redQuantum()) << 16) |
-                    (ScaleQuantumToChar(c.greenQuantum()) << 8) |
-                    ScaleQuantumToChar(c.blueQuantum());
+                     (ScaleQuantumToChar(c.greenQuantum()) << 8) |
+                     ScaleQuantumToChar(c.blueQuantum());
       targetPixels.push_back(rgb);
     }
   }
 
   if (targetPixels.size() != matrix->width() * matrix->height()) {
-  fprintf(stderr, TERM_ERR "ERROR: targetPixels size (%lu) does not match matrix size (%d)\n" TERM_NORM,
-          targetPixels.size(), matrix->width() * matrix->height());
-  return 1;
-}
-  // launch the demo 
-  DemoRunner *demo_runner = NULL;
-  switch (demo) {
-  case 10:
-    demo_runner = new GuidedColorEvolution(canvas, scroll_ms);
-    break;
-  
-  case 11:
-    demo_runner = new GeneticColors(canvas, scroll_ms);
-    break;
-
-
+    std::cerr << TERM_ERR << "ERROR: targetPixels size (" 
+              << targetPixels.size() << ") does not match matrix size ("
+              << matrix->width() * matrix->height() << ")\n" << TERM_NORM;
+    return 1;
   }
 
-  if (demo_runner == NULL)
+  //Create appropriate demo runner
+  std::unique_ptr<DemoRunner> demo_runner;
+
+  switch (demo) {
+    case 10:
+      demo_runner = std::make_unique<GuidedColorEvolution>(canvas, scroll_ms);
+      break;
+    case 11:
+      demo_runner = std::make_unique<GeneticColors>(canvas, scroll_ms);
+      break;
+    default:
+      return usage(argv[0]);
+  }
+
+  if (!demo_runner) {
     return usage(argv[0]);
+  }
 
-  if (demo == 10 && demo_parameter == NULL) {
-  fprintf(stderr, TERM_ERR "Demo 10 requires a target image filename.\n" TERM_NORM);
-  return usage(argv[0]);
-}
-
-  // interrupt set up and execution 
-  signal(SIGTERM, InterruptHandler);
+  // Set up signal handler to exit on CTRL+C
   signal(SIGINT, InterruptHandler);
+  signal(SIGTERM, InterruptHandler);
+  std::cout << "Press <CTRL-C> to exit and reset LEDs\n";
 
-  printf("Press <CTRL-C> to exit and reset LEDs\n");
-
-  // Now, run our particular demo; it will exit when it sees interrupt_received.
+  // Run the selected animation
   demo_runner->Run();
 
-
-  // clean up: frees memory and exits 
-  delete demo_runner;
-  delete canvas;
-  printf("Received CTRL-C. Exiting.\n");
+  std::cout << "Received CTRL-C. Exiting.\n";
   return 0;
 }
